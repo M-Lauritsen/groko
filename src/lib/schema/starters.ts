@@ -324,7 +324,7 @@ export const STARTERS: StarterTemplate[] = [
     id: "acr-container-apps",
     label: "ACR + Container Apps",
     description:
-      "RG, VNet + CAE subnet, ACR, managed identity + AcrPull, Log Analytics, VNet-integrated CAE, and a sample Container App",
+      "RG, VNet + CAE subnet, ACR, managed identity + AcrPull, Key Vault, Log Analytics, VNet-integrated CAE, and a sample Container App (env vars + HTTP scale + KV secret)",
     icon: "🐳",
     build: (config, makeId) => {
       const rgId = makeId();
@@ -333,6 +333,8 @@ export const STARTERS: StarterTemplate[] = [
       const acrId = makeId();
       const uaiId = makeId();
       const roleId = makeId();
+      const kvId = makeId();
+      const roleKvId = makeId();
       const lawId = makeId();
       const envId = makeId();
       const appId = makeId();
@@ -422,6 +424,35 @@ export const STARTERS: StarterTemplate[] = [
           existingValues: {},
         },
         {
+          id: kvId,
+          type: "azurerm_key_vault",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "kv"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            sku_name: "standard",
+            soft_delete_retention_days: 7,
+            purge_protection_enabled: false,
+            enable_rbac_authorization: true,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+        },
+        {
+          id: roleKvId,
+          type: "azurerm_role_assignment",
+          tfName: "kv_secrets_user",
+          useExisting: false,
+          values: {
+            scope: { resourceId: kvId, attr: "id" },
+            role_definition_name: "Key Vault Secrets User",
+            principal_id: { resourceId: uaiId, attr: "principal_id" },
+          },
+          existingValues: {},
+        },
+        {
           id: lawId,
           type: "azurerm_log_analytics_workspace",
           tfName: "main",
@@ -476,6 +507,20 @@ export const STARTERS: StarterTemplate[] = [
             acr_auth_mode: "managed_identity",
             identity_type: "UserAssigned",
             user_assigned_identity_id: { resourceId: uaiId, attr: "id" },
+            env_vars: [
+              { name: "ASPNETCORE_ENVIRONMENT", value: "Production" },
+              { name: "DB_PASSWORD", secret_name: "db-password" },
+            ],
+            app_secrets: [
+              {
+                name: "db-password",
+                source: "key_vault",
+                key_vault_id: { resourceId: kvId, attr: "id" },
+                secret_name: "db-password",
+              },
+            ],
+            http_scale_enabled: true,
+            http_concurrent_requests: 10,
             tags: { ...config.tags },
           },
           existingValues: {},

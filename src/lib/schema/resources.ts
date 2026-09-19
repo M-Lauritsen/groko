@@ -601,7 +601,7 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
     description: "Azure Key Vault for secrets & keys",
     icon: "🔐",
     defaultName: "main",
-    outputs: ["id", "name"],
+    outputs: ["id", "name", "vault_uri"],
     fields: [
       {
         key: "name",
@@ -1336,6 +1336,34 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
         refTypes: ["azurerm_user_assigned_identity"],
         refAttr: "id",
         description: "Required when ACR auth is Managed identity with UserAssigned",
+      },
+      {
+        key: "env_vars",
+        label: "Environment variables",
+        type: "env_list",
+        defaultValue: [],
+        description: "template.container.env blocks — plain value or secret_name",
+      },
+      {
+        key: "app_secrets",
+        label: "App secrets",
+        type: "secret_list",
+        defaultValue: [],
+        description: "Container App secret blocks — plain value (sensitive var) or Key Vault reference",
+      },
+      {
+        key: "http_scale_enabled",
+        label: "HTTP scale rule",
+        type: "boolean",
+        defaultValue: false,
+        description: "Emit http_scale_rule based on concurrent requests",
+      },
+      {
+        key: "http_concurrent_requests",
+        label: "HTTP concurrent requests",
+        type: "number",
+        defaultValue: 10,
+        description: "Scale when concurrent requests exceed this (string in HCL)",
       },
       {
         key: "tags",

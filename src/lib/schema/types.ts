@@ -7,9 +7,11 @@ export type FieldType =
   | "tags"
   | "list"
   | "reference"
-  | "sensitive";
+  | "sensitive"
+  | "env_list"
+  | "secret_list";
 
-export type ReferenceAttr = "id" | "name" | "location" | "resource_group_name" | "login_server" | "admin_username" | "principal_id";
+export type ReferenceAttr = "id" | "name" | "location" | "resource_group_name" | "login_server" | "admin_username" | "principal_id" | "vault_uri";
 
 export interface FieldOption {
   value: string;
@@ -90,6 +92,24 @@ export function isReferenceValue(v: unknown): v is ReferenceValue {
     "attr" in v &&
     typeof (v as ReferenceValue).resourceId === "string"
   );
+}
+
+
+/** Container App environment variable row. */
+export interface ContainerEnvVar {
+  name: string;
+  value?: string;
+  secret_name?: string;
+}
+
+/** Container App secret: plain value (sensitive var) or Key Vault reference. */
+export interface ContainerAppSecret {
+  name: string;
+  source: "value" | "key_vault";
+  value?: string;
+  key_vault_id?: ReferenceValue;
+  /** Key Vault secret name (not the Container App secret name). */
+  secret_name?: string;
 }
 
 export const AZURE_LOCATIONS: FieldOption[] = [

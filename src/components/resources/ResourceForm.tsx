@@ -10,6 +10,7 @@ import {
 } from "@/lib/generate/deps";
 import type { FieldDef, ReferenceValue } from "@/lib/schema/types";
 import { ReferencePicker } from "./ReferencePicker";
+import { EnvVarsEditor, AppSecretsEditor } from "./ContainerAppExtras";
 import {
   Card,
   SectionTitle,
@@ -175,6 +176,32 @@ export function ResourceForm() {
           />
           {field.description && <Hint>{field.description}</Hint>}
         </div>
+      );
+    }
+
+    if (field.type === "env_list") {
+      return (
+        <EnvVarsEditor
+          key={field.key}
+          value={resource!.values[field.key]}
+          onChange={(next) =>
+            updateResourceValue(resource!.id, field.key, next)
+          }
+        />
+      );
+    }
+
+    if (field.type === "secret_list") {
+      return (
+        <AppSecretsEditor
+          key={field.key}
+          value={resource!.values[field.key]}
+          resources={state.resources}
+          currentId={resource!.id}
+          onChange={(next) =>
+            updateResourceValue(resource!.id, field.key, next)
+          }
+        />
       );
     }
 

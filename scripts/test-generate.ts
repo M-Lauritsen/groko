@@ -108,9 +108,24 @@ function main() {
   assert.doesNotMatch(ca, /password_secret_name/);
   assert.doesNotMatch(ca, /acr-password/);
   assert.match(ca, /var\.ca_cpu/);
+  assert.match(ca, /env\s*\{/);
+  assert.match(ca, /ASPNETCORE_ENVIRONMENT/);
+  assert.match(ca, /http_scale_rule/);
+  assert.match(ca, /concurrent_requests\s*=\s*"10"/);
+  assert.match(ca, /key_vault_secret_id/);
+  assert.match(ca, /secrets\/db-password/);
+  assert.match(ca, /secret_name\s*=\s*"db-password"/);
+  assert.match(idMod, /role_definition_name\s*=\s*"Key Vault Secrets User"/);
+  assert.ok(acaGen.files["modules/security/main.tf"]);
+  assert.match(
+    acaGen.files["modules/security/main.tf"],
+    /resource "azurerm_key_vault"/
+  );
   assert.match(acaGen.files["main.tf"], /module "identity"/);
   assert.match(acaGen.files["main.tf"], /acr_sku\s*=\s*var\.acr_sku/);
-  console.log("✓ ACR + CA starter uses MI + AcrPull + VNet-integrated CAE");
+  console.log(
+    "✓ ACR + CA starter uses MI + AcrPull + VNet CAE + env/http scale/KV secret"
+  );
 
   // 5) Admin auth fallback still works
   nextId = 1;
@@ -265,13 +280,127 @@ function main() {
   assert.match(multiCa, /resource "azurerm_container_app" "app_2"/);
   console.log("✓ Multiple container apps still emit distinct blocks");
 
-  // 7) Preview
+  // 7) Richer CA features: plain secret + env + http scale (no starter)
+  nextId = 1;
+  const rRg = makeId();
+  const rEnv = makeId();
+  const rKv = makeId();
+  const rUai = makeId();
+  const rApp = makeId();
+  const rich: ResourceInstance[] = [
+    {
+      id: rRg,
+      type: "azurerm_resource_group",
+      tfName: "main",
+      useExisting: false,
+      values: { name: "rg", location: "westeurope", tags: {} },
+      existingValues: {},
+    },
+    {
+      id: rKv,
+      type: "azurerm_key_vault",
+      tfName: "main",
+      useExisting: false,
+      values: {
+        name: "kv-rich",
+        resource_group_name: { resourceId: rRg, attr: "name" },
+        location: { resourceId: rRg, attr: "location" },
+        sku_name: "standard",
+        enable_rbac_authorization: true,
+      },
+      existingValues: {},
+    },
+    {
+      id: rUai,
+      type: "azurerm_user_assigned_identity",
+      tfName: "app",
+      useExisting: false,
+      values: {
+        name: "id-app",
+        resource_group_name: { resourceId: rRg, attr: "name" },
+        location: { resourceId: rRg, attr: "location" },
+      },
+      existingValues: {},
+    },
+    {
+      id: rEnv,
+      type: "azurerm_container_app_environment",
+      tfName: "main",
+      useExisting: false,
+      values: {
+        name: "cae",
+        resource_group_name: { resourceId: rRg, attr: "name" },
+        location: { resourceId: rRg, attr: "location" },
+      },
+      existingValues: {},
+    },
+    {
+      id: rApp,
+      type: "azurerm_container_app",
+      tfName: "app",
+      useExisting: false,
+      values: {
+        name: "ca-rich",
+        resource_group_name: { resourceId: rRg, attr: "name" },
+        container_app_environment_id: { resourceId: rEnv, attr: "id" },
+        revision_mode: "Single",
+        container_name: "app",
+        container_image: "mcr.microsoft.com/k8se/quickstart:latest",
+        container_cpu: "0.25",
+        container_memory: "0.5Gi",
+        min_replicas: 1,
+        max_replicas: 5,
+        ingress_enabled: true,
+        ingress_target_port: 80,
+        acr_auth_mode: "managed_identity",
+        identity_type: "UserAssigned",
+        user_assigned_identity_id: { resourceId: rUai, attr: "id" },
+        env_vars: [
+          { name: "LOG_LEVEL", value: "info" },
+          { name: "API_KEY", secret_name: "api-key" },
+        ],
+        app_secrets: [
+          { name: "api-key", source: "value", value: "" },
+          {
+            name: "kv-secret",
+            source: "key_vault",
+            key_vault_id: { resourceId: rKv, attr: "id" },
+            secret_name: "app-secret",
+          },
+        ],
+        http_scale_enabled: true,
+        http_concurrent_requests: 20,
+      },
+      existingValues: {},
+    },
+  ];
+  const richGen = generateProject(config, rich);
+  const richCa = richGen.files["modules/container_apps/main.tf"];
+  assert.match(richCa, /env\s*\{/);
+  assert.match(richCa, /LOG_LEVEL/);
+  assert.match(richCa, /secret_name\s*=\s*"api-key"/);
+  assert.match(richCa, /http_scale_rule/);
+  assert.match(richCa, /concurrent_requests\s*=\s*"20"/);
+  assert.match(richCa, /key_vault_secret_id/);
+  assert.match(richCa, /secrets\/app-secret/);
+  assert.match(richCa, /value\s*=\s*var\.app_secret_api_key/);
+  // Auto-emitted KV Secrets User (no explicit role in this fixture)
+  assert.match(
+    richCa,
+    /role_definition_name\s*=\s*"Key Vault Secrets User"/
+  );
+  assert.ok(
+    richGen.sensitiveVars.some((s) => s.name.includes("secret_api_key"))
+  );
+  console.log("✓ Richer CA: env {, http_scale_rule, KV secret + auto RBAC");
+
+  // 8) Preview
   const preview = previewHcl(config, resources);
   assert.match(preview, /backend\.dev\.hcl/);
   assert.match(preview, /config\.tf/);
   console.log("✓ Live preview includes backend + config");
 
-  // 8) Starters
+  // 9) Starters
   for (const id of [
     "blank",
     "web-sql",

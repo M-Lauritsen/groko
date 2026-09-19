@@ -20,10 +20,11 @@ npm test
 
 ## How export works
 
-1. **Setup** — name, region, prefix, tags; starters include **ACR + Container Apps** (VNet + MI + AcrPull).
+1. **Setup** — name, region, prefix, tags; starters include **ACR + Container Apps** (VNet + MI + AcrPull + Key Vault sample secret + HTTP scale).
 2. **Resources** — catalogue includes identities, role assignments, ACR, CAE, and multiple container apps.
 3. **ACR auth** — per app: **Managed identity (recommended)** or Admin credentials (lab fallback).
-4. **Export** — modular ZIP:
+4. **Container App extras** — list editors for env vars and app secrets (plain → sensitive var, or Key Vault ref + optional Secrets User role); optional HTTP scale rule (`concurrent_requests`).
+5. **Export** — modular ZIP:
 
 ```
 config.tf                 # versions + provider + partial backend "azurerm" {}
@@ -79,7 +80,7 @@ scripts/test-generate.ts
 
 ## Catalogue highlights
 
-Containers + Identity: `azurerm_container_registry`, `azurerm_user_assigned_identity`, `azurerm_role_assignment` (AcrPull), `azurerm_log_analytics_workspace`, `azurerm_container_app_environment` (optional `infrastructure_subnet_id` + workload profile), `azurerm_container_app` (MI or admin registry auth). Subnets support `Microsoft.App/environments` delegation.
+Containers + Identity: `azurerm_container_registry`, `azurerm_user_assigned_identity`, `azurerm_role_assignment` (AcrPull / Key Vault Secrets User), `azurerm_log_analytics_workspace`, `azurerm_container_app_environment` (optional `infrastructure_subnet_id` + workload profile), `azurerm_container_app` (MI or admin registry auth, **env vars**, **app secrets** with plain or Key Vault refs, **HTTP scale rule**). Subnets support `Microsoft.App/environments` delegation.
 
 ## Known gaps
 
@@ -88,6 +89,7 @@ Containers + Identity: `azurerm_container_registry`, `azurerm_user_assigned_iden
 - Key Vault RBAC beyond tenant/RBAC flag is minimal.
 - No Function App resource yet.
 - Container App is single-container (no sidecars/Dapr).
+- Container App secrets from Key Vault use `vault_uri + secrets/<name>` (versionless); create the KV secret out-of-band or add an `azurerm_key_vault_secret` resource yourself.
 - ACR private endpoint / private DNS not modeled (CAE VNet integration is).
 - System-assigned identity + AcrPull role assignment is not auto-wired (user-assigned path is).
 - Module boundaries are fixed groupings.

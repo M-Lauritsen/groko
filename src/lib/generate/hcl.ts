@@ -3,6 +3,8 @@ import {
   type ResourceInstance,
   type FieldDef,
   type ReferenceValue,
+  type ContainerEnvVar,
+  type ContainerAppSecret,
   isReferenceValue,
   TERRAFORM_VERSION,
   AZURERM_VERSION,
@@ -471,6 +473,153 @@ function resolveAcrAttr(
   return `${prefix}.${attr}`;
 }
 
+function parseEnvVars(raw: unknown): ContainerEnvVar[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null)
+    .map((e) => ({
+      name: String(e.name ?? ""),
+      value: e.value !== undefined ? String(e.value) : undefined,
+      secret_name:
+        e.secret_name !== undefined ? String(e.secret_name) : undefined,
+    }))
+    .filter((e) => e.name.trim() !== "");
+}
+
+function parseAppSecrets(raw: unknown): ContainerAppSecret[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null)
+    .map((e) => {
+      const source = e.source === "key_vault" ? "key_vault" : "value";
+      const item: ContainerAppSecret = {
+        name: String(e.name ?? ""),
+        source,
+      };
+      if (e.value !== undefined) item.value = String(e.value);
+      if (e.secret_name !== undefined) item.secret_name = String(e.secret_name);
+      if (isReferenceValue(e.key_vault_id)) item.key_vault_id = e.key_vault_id;
+      return item;
+    })
+    .filter((e) => e.name.trim() !== "");
+}
+
+function emitContainerAppSecrets(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"],
+  secrets: ContainerAppSecret[],
+  uaiRef: unknown
+): string[] {
+  const lines: string[] = [];
+  for (const sec of secrets) {
+    if (sec.source === "key_vault") {
+      if (!isReferenceValue(sec.key_vault_id) || !sec.secret_name) continue;
+      const vaultUri = resolveRef(
+        { resourceId: sec.key_vault_id.resourceId, attr: "vault_uri" },
+        resources
+      );
+      const secretName = escapeHclString(sec.secret_name);
+      let block = `  secret {
+    name                = ${formatString(sec.name)}
+    key_vault_secret_id = "\${${vaultUri}}secrets/${secretName}"`;
+      if (isReferenceValue(uaiRef)) {
+        block += `
+    identity            = ${resolveRef(uaiRef, resources)}`;
+      }
+      block += `
+  }`;
+      lines.push(block);
+    } else {
+      const varName = sensitiveVarName(resource, `secret_${sec.name}`);
+      sensitiveVars.push({
+        name: varName,
+        description: `Container App secret "${sec.name}" for ${resource.type}.${resource.tfName}`,
+        resourceLabel: `Container App.${resource.tfName}`,
+      });
+      lines.push(`  secret {
+    name  = ${formatString(sec.name)}
+    value = var.${varName}
+  }`);
+    }
+  }
+  return lines;
+}
+
+function emitContainerEnvBlocks(envVars: ContainerEnvVar[]): string {
+  if (envVars.length === 0) return "";
+  const parts: string[] = [];
+  for (const ev of envVars) {
+    if (ev.secret_name) {
+      parts.push(`      env {
+        name        = ${formatString(ev.name)}
+        secret_name = ${formatString(ev.secret_name)}
+      }`);
+    } else {
+      parts.push(`      env {
+        name  = ${formatString(ev.name)}
+        value = ${formatString(ev.value ?? "")}
+      }`);
+    }
+  }
+  return "\n" + parts.join("\n");
+}
+
+/** Emit Key Vault Secrets User role assignments when MI + KV secrets are used. */
+function emitKvSecretsUserAssignments(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  secrets: ContainerAppSecret[],
+  uaiRef: unknown
+): string {
+  if (!isReferenceValue(uaiRef)) return "";
+  const kvIds = new Set<string>();
+  for (const sec of secrets) {
+    if (sec.source === "key_vault" && isReferenceValue(sec.key_vault_id)) {
+      kvIds.add(sec.key_vault_id.resourceId);
+    }
+  }
+  if (kvIds.size === 0) return "";
+
+  const uai = resources.find((r) => r.id === uaiRef.resourceId);
+  if (!uai) return "";
+
+  const blocks: string[] = [];
+  for (const kvId of kvIds) {
+    const already = resources.some(
+      (r) =>
+        r.type === "azurerm_role_assignment" &&
+        !r.useExisting &&
+        String(r.values.role_definition_name ?? "") ===
+          "Key Vault Secrets User" &&
+        isReferenceValue(r.values.scope) &&
+        (r.values.scope as ReferenceValue).resourceId === kvId &&
+        isReferenceValue(r.values.principal_id) &&
+        (r.values.principal_id as ReferenceValue).resourceId === uai.id
+    );
+    if (already) continue;
+
+    const kv = resources.find((r) => r.id === kvId);
+    if (!kv) continue;
+    const tfSafe = `${resource.tfName}_kv_${kv.tfName}_secrets_user`.replace(
+      /[^a-zA-Z0-9_]/g,
+      "_"
+    );
+    const scopeExpr = resolveRef({ resourceId: kvId, attr: "id" }, resources);
+    const principalExpr = resolveRef(
+      { resourceId: uai.id, attr: "principal_id" },
+      resources
+    );
+    blocks.push(`resource "azurerm_role_assignment" "${tfSafe}" {
+  scope                = ${scopeExpr}
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = ${principalExpr}
+}
+`);
+  }
+  return blocks.length ? "\n" + blocks.join("\n") : "";
+}
+
 function emitContainerAppBlock(
   resource: ResourceInstance,
   resources: ResourceInstance[],
@@ -504,6 +653,8 @@ function emitContainerAppBlock(
   const authMode = String(v.acr_auth_mode ?? "managed_identity");
   const identityType = String(v.identity_type ?? "UserAssigned");
   const uaiRef = v.user_assigned_identity_id;
+  const appSecrets = parseAppSecrets(v.app_secrets);
+  const envVars = parseEnvVars(v.env_vars);
 
   if (identityType && identityType !== "None") {
     if (identityType.includes("UserAssigned") && isReferenceValue(uaiRef)) {
@@ -517,6 +668,16 @@ function emitContainerAppBlock(
   }`);
     }
   }
+
+  lines.push(
+    ...emitContainerAppSecrets(
+      resource,
+      resources,
+      sensitiveVars,
+      appSecrets,
+      uaiRef
+    )
+  );
 
   if (loginServer) {
     if (authMode === "admin") {
@@ -584,15 +745,27 @@ function emitContainerAppBlock(
     ? "var.ca_max_replicas"
     : String(Number(v.max_replicas ?? 10));
 
+  const envHcl = emitContainerEnvBlocks(envVars);
+
+  let scaleRule = "";
+  if (v.http_scale_enabled) {
+    const concurrent = String(Number(v.http_concurrent_requests ?? 10));
+    scaleRule = `
+    http_scale_rule {
+      name                = "http"
+      concurrent_requests = ${formatString(concurrent)}
+    }`;
+  }
+
   lines.push(`  template {
     min_replicas = ${minExpr}
     max_replicas = ${maxExpr}
-
+${scaleRule}
     container {
       name   = ${formatString(cname)}
       image  = ${imageHcl}
       cpu    = ${cpuExpr}
-      memory = ${memExpr}
+      memory = ${memExpr}${envHcl}
     }
   }`);
 
@@ -627,6 +800,7 @@ function emitContainerAppBlock(
 
   return lines.join("\n");
 }
+
 
 function emitSubnetBlock(
   resource: ResourceInstance,
@@ -715,7 +889,17 @@ export function emitResourceBlock(
     }
   }
 
-  return `resource "${resource.type}" "${resource.tfName}" {\n${body}\n}\n`;
+  const main = `resource "${resource.type}" "${resource.tfName}" {\n${body}\n}\n`;
+  if (resource.type === "azurerm_container_app") {
+    const extras = emitKvSecretsUserAssignments(
+      resource,
+      resources,
+      parseAppSecrets(resource.values.app_secrets),
+      resource.values.user_assigned_identity_id
+    );
+    return main + extras;
+  }
+  return main;
 }
 
 function emitDataBlock(resource: ResourceInstance, fields: FieldDef[]): string {
@@ -750,6 +934,9 @@ function attrsToExport(r: ResourceInstance): string[] {
   if (r.type === "azurerm_user_assigned_identity") {
     attrs.add("principal_id");
     attrs.add("client_id");
+  }
+  if (r.type === "azurerm_key_vault") {
+    attrs.add("vault_uri");
   }
   return Array.from(attrs);
 }

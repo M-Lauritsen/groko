@@ -10,6 +10,22 @@ export interface DepEdge {
 }
 
 /** Collect all reference edges in the project. */
+function pushRefEdge(
+  edges: DepEdge[],
+  fromId: string,
+  fieldKey: string,
+  val: unknown
+): void {
+  if (isReferenceValue(val)) {
+    edges.push({
+      fromId,
+      toId: val.resourceId,
+      fieldKey,
+      attr: val.attr,
+    });
+  }
+}
+
 export function collectDeps(resources: ResourceInstance[]): DepEdge[] {
   const edges: DepEdge[] = [];
   for (const r of resources) {
@@ -17,13 +33,19 @@ export function collectDeps(resources: ResourceInstance[]): DepEdge[] {
     if (!def) continue;
     for (const field of def.fields) {
       const val = r.values[field.key];
-      if (isReferenceValue(val)) {
-        edges.push({
-          fromId: r.id,
-          toId: (val as ReferenceValue).resourceId,
-          fieldKey: field.key,
-          attr: (val as ReferenceValue).attr,
-        });
+      pushRefEdge(edges, r.id, field.key, val);
+      // Nested Key Vault refs inside Container App secrets
+      if (field.key === "app_secrets" && Array.isArray(val)) {
+        for (const item of val) {
+          if (item && typeof item === "object") {
+            pushRefEdge(
+              edges,
+              r.id,
+              "app_secrets.key_vault_id",
+              (item as Record<string, unknown>).key_vault_id
+            );
+          }
+        }
       }
     }
   }

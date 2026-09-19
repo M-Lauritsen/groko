@@ -175,8 +175,20 @@ export function collectRefsFromResources(
     for (const field of def.fields) {
       const val = r.values[field.key];
       if (isReferenceValue(val)) refs.push(val);
+      if (field.key === "app_secrets" && Array.isArray(val)) {
+        for (const item of val) {
+          if (
+            item &&
+            typeof item === "object" &&
+            isReferenceValue((item as Record<string, unknown>).key_vault_id)
+          ) {
+            refs.push(
+              (item as Record<string, unknown>).key_vault_id as ReferenceValue
+            );
+          }
+        }
+      }
     }
-    // Container app ACR ref is also a reference field
   }
   return refs;
 }
