@@ -5,6 +5,9 @@ import assert from "node:assert/strict";
 import { generateProject, previewHcl } from "../src/lib/generate/hcl";
 import { getStarter } from "../src/lib/schema/starters";
 import type { ProjectConfig, ResourceInstance } from "../src/lib/schema/types";
+import { parseHcl, parseHclFiles } from "../src/lib/import/parse";
+import { mapToProject, mergeImportedResources } from "../src/lib/import/mapToProject";
+import { isReferenceValue } from "../src/lib/schema/types";
 
 let nextId = 1;
 function makeId(): string {
@@ -411,6 +414,91 @@ function main() {
     assert.ok(getStarter(id), `starter ${id} missing`);
   }
   console.log("✓ All starters registered");
+
+
+  // 10) Terraform import — RG + VNet + subnet refs, data source, unsupported type
+  {
+    const fixture = `
+resource "azurerm_resource_group" "main" {
+  name     = "rg-import-demo"
+  location = "westeurope"
+  tags = {
+    Environment = "dev"
+    ManagedBy   = "terraform"
+  }
+}
+
+resource "azurerm_virtual_network" "main" {
+  name                = "vnet-main"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  address_space       = ["10.0.0.0/16"]
+}
+
+resource "azurerm_subnet" "default" {
+  name                 = "snet-default"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = ["10.0.1.0/24"]
+}
+
+data "azurerm_resource_group" "existing" {
+  name = "rg-already-there"
+}
+
+resource "azurerm_kubernetes_cluster" "aks" {
+  name = "aks-unsupported"
+}
+
+module "network" {
+  source = "./modules/network"
+}
+`;
+    const parsed = parseHcl(fixture, "fixture.tf");
+    const summary = mapToProject(parsed);
+    assert.equal(summary.supportedCount, 4); // 3 resources + 1 data
+    assert.ok(summary.skipped.some((s) => s.type === "azurerm_kubernetes_cluster"));
+    assert.ok(summary.skipped.some((s) => s.kind === "module"));
+    const rg = summary.resources.find(
+      (r) => r.type === "azurerm_resource_group" && !r.useExisting
+    );
+    assert.ok(rg);
+    assert.equal(rg!.values.name, "rg-import-demo");
+    assert.equal(rg!.values.location, "westeurope");
+    const tags = rg!.values.tags as Record<string, string>;
+    assert.equal(tags.Environment, "dev");
+
+    const vnet = summary.resources.find((r) => r.type === "azurerm_virtual_network");
+    assert.ok(vnet);
+    assert.ok(isReferenceValue(vnet!.values.resource_group_name));
+    assert.equal(
+      (vnet!.values.resource_group_name as { resourceId: string }).resourceId,
+      rg!.id
+    );
+    assert.equal(
+      (vnet!.values.resource_group_name as { attr: string }).attr,
+      "name"
+    );
+    assert.ok(isReferenceValue(vnet!.values.location));
+    assert.deepEqual(vnet!.values.address_space, ["10.0.0.0/16"]);
+
+    const subnet = summary.resources.find((r) => r.type === "azurerm_subnet");
+    assert.ok(subnet);
+    assert.ok(isReferenceValue(subnet!.values.virtual_network_name));
+    assert.equal(
+      (subnet!.values.virtual_network_name as { resourceId: string }).resourceId,
+      vnet!.id
+    );
+
+    const dataRg = summary.resources.find((r) => r.useExisting);
+    assert.ok(dataRg);
+    assert.equal(dataRg!.type, "azurerm_resource_group");
+    assert.equal(dataRg!.existingValues.name, "rg-already-there");
+
+    const merged = mergeImportedResources([], summary.resources, "merge");
+    assert.equal(merged.length, 4);
+    console.log("✓ Import: RG/VNet/subnet refs + data source + unsupported/module skip");
+  }
 
   console.log("\nAll generate smoke tests passed.");
 }

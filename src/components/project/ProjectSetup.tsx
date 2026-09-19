@@ -14,6 +14,7 @@ import {
   SectionTitle,
   Badge,
 } from "@/components/ui/Field";
+import { ImportTerraform } from "@/components/project/ImportTerraform";
 
 export function ProjectSetup() {
   const { state, setConfig, applyStarter } = useProject();
@@ -210,6 +211,8 @@ export function ProjectSetup() {
           </div>
         )}
       </Card>
+
+      <ImportTerraform />
     </div>
   );
 }

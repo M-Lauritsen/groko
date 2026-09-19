@@ -18,6 +18,19 @@ npm run build
 npm test
 ```
 
+
+## Import existing Terraform
+
+Upload one or more `.tf` / `.tfvars` files, or a `.zip` of a Terraform root, via **Setup → Import existing Terraform** or the header **Upload Terraform** control.
+
+- Client-side only (JSZip for archives). Shows a summary of supported vs skipped types before merge/replace.
+- Maps `resource "azurerm_…"` and `data "azurerm_…"` blocks that exist in `RESOURCE_CATALOGUE`.
+- Data sources become **Use existing** with identifying values filled when possible.
+- Simple interpolations like `azurerm_resource_group.main.name` / `.id` become reference pickers when the target was imported.
+- Skips/warns: modules (optional `modules/*/main.tf` extract only), `for_each`/`count`, unknown providers, unsupported types, locals-heavy expressions, unmapped arguments.
+
+Not a perfect round-trip — nested blocks and complex HCL are best-effort.
+
 ## How export works
 
 1. **Setup** — name, region, prefix, tags; starters include **ACR + Container Apps** (VNet + MI + AcrPull + Key Vault sample secret + HTTP scale).
@@ -73,6 +86,7 @@ Edit `environments/backend.*.hcl` (`storage_account_name`, etc.) and fill `CHANG
 ```
 src/lib/schema/     # ResourceTypeDef catalogue + starters
 src/lib/generate/   # HCL emitters, module grouping, ZIP
+src/lib/import/     # Client-side HCL parse → ResourceInstance[]
 src/lib/store/      # React project state
 src/components/     # Setup / catalogue / forms / export
 scripts/test-generate.ts
@@ -94,3 +108,4 @@ Containers + Identity: `azurerm_container_registry`, `azurerm_user_assigned_iden
 - System-assigned identity + AcrPull role assignment is not auto-wired (user-assigned path is).
 - Module boundaries are fixed groupings.
 - No undo/history; starter apply replaces the list.
+- Terraform import is best-effort (not full HCL2); modules/for_each/complex expressions are skipped.
