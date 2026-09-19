@@ -1,0 +1,1386 @@
+import {
+  type ProjectConfig,
+  type ResourceInstance,
+  type FieldDef,
+  type ReferenceValue,
+  isReferenceValue,
+  TERRAFORM_VERSION,
+  AZURERM_VERSION,
+} from "../schema/types";
+import { getResourceType } from "../schema/resources";
+import {
+  MODULE_DEFS,
+  partitionByModule,
+  moduleOrder,
+  createModuleOfMap,
+  resolveModularRef,
+  outputName,
+  envTags,
+  type ModularRefContext,
+  type CrossModuleInput,
+} from "./modules";
+
+function escapeHclString(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function formatString(s: string): string {
+  return `"${escapeHclString(s)}"`;
+}
+
+function formatTags(tags: Record<string, string>): string {
+  const entries = Object.entries(tags);
+  if (entries.length === 0) return "{}";
+  const lines = entries.map(
+    ([k, v]) => `    ${k} = ${formatString(String(v))}`
+  );
+  return `{\n${lines.join("\n")}\n  }`;
+}
+
+function formatList(items: string[]): string {
+  if (items.length === 0) return "[]";
+  return `[${items.map((i) => formatString(i)).join(", ")}]`;
+}
+
+/** When set, resolveRef emits cross-module var.* inputs instead of foreign addresses. */
+let modularRefCtx: ModularRefContext | null = null;
+
+export function setModularRefContext(ctx: ModularRefContext | null): void {
+  modularRefCtx = ctx;
+}
+
+function resolveRef(
+  ref: ReferenceValue,
+  resources: ResourceInstance[]
+): string {
+  if (modularRefCtx) {
+    return resolveModularRef(ref, resources, modularRefCtx);
+  }
+  const target = resources.find((r) => r.id === ref.resourceId);
+  if (!target) return `"UNRESOLVED_REF"`;
+  const prefix = target.useExisting
+    ? `data.${target.type}.${target.tfName}`
+    : `${target.type}.${target.tfName}`;
+  return `${prefix}.${ref.attr}`;
+}
+
+function sensitiveVarName(resource: ResourceInstance, fieldKey: string): string {
+  return `${resource.tfName}_${fieldKey}`.replace(/[^a-zA-Z0-9_]/g, "_");
+}
+
+/** Path → file contents for the generated Terraform project (supports nested paths). */
+export type GeneratedFiles = Record<string, string>;
+
+export interface GenerateResult {
+  files: GeneratedFiles;
+  sensitiveVars: { name: string; description: string; resourceLabel: string }[];
+}
+
+function emitNsgRules(values: Record<string, unknown>): string {
+  const rules: string[] = [];
+  if (values.allow_ssh) {
+    rules.push(`  security_rule {
+    name                       = "AllowSSH"
+    priority                   = 1001
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }`);
+  }
+  if (values.allow_http) {
+    rules.push(`  security_rule {
+    name                       = "AllowHTTP"
+    priority                   = 1002
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }`);
+  }
+  if (values.allow_https) {
+    rules.push(`  security_rule {
+    name                       = "AllowHTTPS"
+    priority                   = 1003
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }`);
+  }
+  return rules.length ? "\n" + rules.join("\n\n") + "\n" : "";
+}
+
+function emitFieldValue(
+  field: FieldDef,
+  value: unknown,
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string | null {
+  // Skip helper-only fields for NSG
+  if (
+    ["allow_ssh", "allow_http", "allow_https"].includes(field.key) &&
+    resource.type === "azurerm_network_security_group"
+  ) {
+    return null;
+  }
+
+  // Skip VM nested helpers — handled specially
+  if (
+    resource.type === "azurerm_linux_virtual_machine" &&
+    (field.key.startsWith("os_disk_") ||
+      field.key.startsWith("source_image_") ||
+      field.key === "admin_ssh_public_key" ||
+      field.key === "network_interface_ids")
+  ) {
+    return null;
+  }
+
+  // Skip web app node_version — handled in site_config
+  if (
+    resource.type === "azurerm_linux_web_app" &&
+    field.key === "node_version"
+  ) {
+    return null;
+  }
+
+  // Skip NIC public IP / subnet — handled in ip_configuration
+  if (
+    resource.type === "azurerm_network_interface" &&
+    (field.key === "subnet_id" || field.key === "public_ip_address_id")
+  ) {
+    return null;
+  }
+
+  // Container App: nested template/ingress/registry handled specially
+  if (resource.type === "azurerm_container_app") {
+    const topLevel = new Set([
+      "name",
+      "resource_group_name",
+      "container_app_environment_id",
+      "revision_mode",
+      "tags",
+    ]);
+    if (!topLevel.has(field.key)) {
+      return null;
+    }
+  }
+
+  // Environment: nested / VNet wiring handled specially
+  if (
+    resource.type === "azurerm_container_app_environment" &&
+    (
+      field.key === "log_analytics_workspace_id" ||
+      field.key === "infrastructure_subnet_id" ||
+      field.key === "internal_load_balancer_enabled" ||
+      field.key === "zone_redundancy_enabled"
+    )
+  ) {
+    return null;
+  }
+
+  if (resource.type === "azurerm_subnet" && field.key === "delegation") {
+    return null;
+  }
+
+  const hclKey = field.hclKey ?? field.key;
+
+  if (field.type === "sensitive") {
+    const varName = sensitiveVarName(resource, field.key);
+    const def = getResourceType(resource.type);
+    sensitiveVars.push({
+      name: varName,
+      description: field.description || `${field.label} for ${resource.type}.${resource.tfName}`,
+      resourceLabel: `${def?.label ?? resource.type}.${resource.tfName}`,
+    });
+    return `  ${hclKey} = var.${varName}`;
+  }
+
+  if (value === undefined || value === null || value === "") {
+    if (!field.required) return null;
+  }
+
+  if (field.type === "reference" || isReferenceValue(value)) {
+    if (isReferenceValue(value)) {
+      return `  ${hclKey} = ${resolveRef(value, resources)}`;
+    }
+    // Allow plain string literals (e.g. existing RG name typed by hand)
+    if (typeof value === "string" && value) {
+      return `  ${hclKey} = ${formatString(value)}`;
+    }
+    return null;
+  }
+
+  if (field.type === "boolean") {
+    return `  ${hclKey} = ${value ? "true" : "false"}`;
+  }
+
+  if (field.type === "number") {
+    return `  ${hclKey} = ${Number(value)}`;
+  }
+
+  if (field.type === "list") {
+    const items = Array.isArray(value) ? (value as string[]) : [];
+    return `  ${hclKey} = ${formatList(items)}`;
+  }
+
+  if (field.type === "tags") {
+    const tags =
+      typeof value === "object" && value !== null
+        ? (value as Record<string, string>)
+        : {};
+    return `  ${hclKey} = ${formatTags(tags)}`;
+  }
+
+  // string / select
+  return `  ${hclKey} = ${formatString(String(value ?? ""))}`;
+}
+
+function emitVmBlock(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const v = resource.values;
+  const def = getResourceType(resource.type)!;
+  const lines: string[] = [];
+
+  for (const field of def.fields) {
+    if (
+      field.key.startsWith("os_disk_") ||
+      field.key.startsWith("source_image_") ||
+      field.key === "admin_ssh_public_key" ||
+      field.key === "network_interface_ids"
+    ) {
+      continue;
+    }
+    const line = emitFieldValue(
+      field,
+      v[field.key],
+      resource,
+      resources,
+      sensitiveVars
+    );
+    if (line) lines.push(line);
+  }
+
+  // network_interface_ids
+  const nicRef = v.network_interface_ids;
+  if (isReferenceValue(nicRef)) {
+    lines.push(`  network_interface_ids = [${resolveRef(nicRef, resources)}]`);
+  }
+
+  // SSH key as sensitive var
+  const sshVar = sensitiveVarName(resource, "admin_ssh_public_key");
+  sensitiveVars.push({
+    name: sshVar,
+    description: "SSH public key for the Linux VM admin user",
+    resourceLabel: `Linux VM.${resource.tfName}`,
+  });
+
+  lines.push(`  admin_ssh_key {
+    username   = ${formatString(String(v.admin_username ?? "azureuser"))}
+    public_key = var.${sshVar}
+  }`);
+
+  lines.push(`  os_disk {
+    caching              = ${formatString(String(v.os_disk_caching ?? "ReadWrite"))}
+    storage_account_type = ${formatString(String(v.os_disk_storage_account_type ?? "Standard_LRS"))}
+  }`);
+
+  lines.push(`  source_image_reference {
+    publisher = ${formatString(String(v.source_image_publisher ?? "Canonical"))}
+    offer     = ${formatString(String(v.source_image_offer ?? "0001-com-ubuntu-server-jammy"))}
+    sku       = ${formatString(String(v.source_image_sku ?? "22_04-lts-gen2"))}
+    version   = ${formatString(String(v.source_image_version ?? "latest"))}
+  }`);
+
+  // disable_password_authentication is required when using SSH
+  lines.push(`  disable_password_authentication = true`);
+
+  return lines.join("\n");
+}
+
+function emitNicBlock(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const v = resource.values;
+  const def = getResourceType(resource.type)!;
+  const lines: string[] = [];
+
+  for (const field of def.fields) {
+    if (field.key === "subnet_id" || field.key === "public_ip_address_id") continue;
+    const line = emitFieldValue(
+      field,
+      v[field.key],
+      resource,
+      resources,
+      sensitiveVars
+    );
+    if (line) lines.push(line);
+  }
+
+  const subnetRef = v.subnet_id;
+  const pipRef = v.public_ip_address_id;
+  let ipConfig = `  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = ${isReferenceValue(subnetRef) ? resolveRef(subnetRef, resources) : '""'}
+    private_ip_address_allocation = "Dynamic"`;
+  if (isReferenceValue(pipRef)) {
+    ipConfig += `\n    public_ip_address_id          = ${resolveRef(pipRef, resources)}`;
+  }
+  ipConfig += `\n  }`;
+  lines.push(ipConfig);
+
+  return lines.join("\n");
+}
+
+function emitWebAppBlock(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const v = resource.values;
+  const def = getResourceType(resource.type)!;
+  const lines: string[] = [];
+
+  for (const field of def.fields) {
+    if (field.key === "node_version") continue;
+    const line = emitFieldValue(
+      field,
+      v[field.key],
+      resource,
+      resources,
+      sensitiveVars
+    );
+    if (line) lines.push(line);
+  }
+
+  const nodeVer = String(v.node_version ?? "");
+  if (nodeVer) {
+    lines.push(`  site_config {
+    application_stack {
+      node_version = ${formatString(nodeVer)}
+    }
+  }`);
+  } else {
+    lines.push(`  site_config {}`);
+  }
+
+  return lines.join("\n");
+}
+
+
+
+/** True if image already includes a registry host (do not prefix ACR login_server). */
+function isFullyQualifiedContainerImage(image: string): boolean {
+  if (image.startsWith("mcr.")) return true;
+  if (image.includes(".azurecr.io/")) return true;
+  const slash = image.indexOf("/");
+  if (slash === -1) return false; // e.g. "myapi:1.0.0"
+  const host = image.slice(0, slash);
+  return host.includes(".");
+}
+
+function emitContainerAppEnvBlock(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const v = resource.values;
+  const def = getResourceType(resource.type)!;
+  const lines: string[] = [];
+  const skip = new Set([
+    "log_analytics_workspace_id",
+    "infrastructure_subnet_id",
+    "internal_load_balancer_enabled",
+    "zone_redundancy_enabled",
+  ]);
+
+  for (const field of def.fields) {
+    if (skip.has(field.key)) continue;
+    const line = emitFieldValue(
+      field,
+      v[field.key],
+      resource,
+      resources,
+      sensitiveVars
+    );
+    if (line) lines.push(line);
+  }
+
+  const lawRef = v.log_analytics_workspace_id;
+  if (isReferenceValue(lawRef)) {
+    lines.push(`  logs_destination           = "log-analytics"`);
+    lines.push(
+      `  log_analytics_workspace_id = ${resolveRef(lawRef, resources)}`
+    );
+  }
+
+  // azurerm 4.x: infrastructure_subnet_id needs a workload_profile (Consumption)
+  const subnetRef = v.infrastructure_subnet_id;
+  if (isReferenceValue(subnetRef)) {
+    lines.push(
+      `  infrastructure_subnet_id = ${resolveRef(subnetRef, resources)}`
+    );
+    if (v.internal_load_balancer_enabled) {
+      lines.push(`  internal_load_balancer_enabled = true`);
+    }
+    if (v.zone_redundancy_enabled) {
+      lines.push(`  zone_redundancy_enabled = true`);
+    }
+    lines.push(`  workload_profile {
+    name                  = "Consumption"
+    workload_profile_type = "Consumption"
+  }`);
+  }
+
+  return lines.join("\n");
+}
+
+function resolveAcrAttr(
+  acrRef: unknown,
+  attr: string,
+  resources: ResourceInstance[]
+): string | null {
+  if (!isReferenceValue(acrRef)) return null;
+  const target = resources.find((r) => r.id === acrRef.resourceId);
+  if (!target || target.type !== "azurerm_container_registry") return null;
+  if (modularRefCtx) {
+    return resolveModularRef(
+      { resourceId: target.id, attr: attr as ReferenceValue["attr"] },
+      resources,
+      modularRefCtx
+    );
+  }
+  const prefix = target.useExisting
+    ? `data.${target.type}.${target.tfName}`
+    : `${target.type}.${target.tfName}`;
+  return `${prefix}.${attr}`;
+}
+
+function emitContainerAppBlock(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const v = resource.values;
+  const def = getResourceType(resource.type)!;
+  const lines: string[] = [];
+  const topLevel = new Set([
+    "name",
+    "resource_group_name",
+    "container_app_environment_id",
+    "revision_mode",
+    "tags",
+  ]);
+
+  for (const field of def.fields) {
+    if (!topLevel.has(field.key)) continue;
+    const line = emitFieldValue(
+      field,
+      v[field.key],
+      resource,
+      resources,
+      sensitiveVars
+    );
+    if (line) lines.push(line);
+  }
+
+  const acrRef = v.container_registry_id;
+  const loginServer = resolveAcrAttr(acrRef, "login_server", resources);
+  const authMode = String(v.acr_auth_mode ?? "managed_identity");
+  const identityType = String(v.identity_type ?? "UserAssigned");
+  const uaiRef = v.user_assigned_identity_id;
+
+  if (identityType && identityType !== "None") {
+    if (identityType.includes("UserAssigned") && isReferenceValue(uaiRef)) {
+      lines.push(`  identity {
+    type         = ${formatString(identityType)}
+    identity_ids = [${resolveRef(uaiRef, resources)}]
+  }`);
+    } else if (identityType === "SystemAssigned") {
+      lines.push(`  identity {
+    type = "SystemAssigned"
+  }`);
+    }
+  }
+
+  if (loginServer) {
+    if (authMode === "admin") {
+      const adminUser = resolveAcrAttr(acrRef, "admin_username", resources);
+      const adminPass = resolveAcrAttr(acrRef, "admin_password", resources);
+      if (adminUser && adminPass) {
+        lines.push(`  secret {
+    name  = "acr-password"
+    value = ${adminPass}
+  }`);
+        lines.push(`  registry {
+    server               = ${loginServer}
+    username             = ${adminUser}
+    password_secret_name = "acr-password"
+  }`);
+      }
+    } else if (isReferenceValue(uaiRef)) {
+      lines.push(`  registry {
+    server   = ${loginServer}
+    identity = ${resolveRef(uaiRef, resources)}
+  }`);
+      const roleDeps = resources.filter(
+        (r) =>
+          r.type === "azurerm_role_assignment" &&
+          !r.useExisting &&
+          isReferenceValue(r.values.scope) &&
+          isReferenceValue(acrRef) &&
+          (r.values.scope as { resourceId: string }).resourceId ===
+            (acrRef as { resourceId: string }).resourceId
+      );
+      if (roleDeps.length > 0 && !modularRefCtx) {
+        lines.push(
+          `  depends_on = [${roleDeps
+            .map((r) => `${r.type}.${r.tfName}`)
+            .join(", ")}]`
+        );
+      } else if (roleDeps.length > 0) {
+        lines.push(
+          `  # Apply AcrPull (modules/identity) before the first image pull`
+        );
+      }
+    }
+  }
+
+  const rawImage = String(
+    v.container_image ?? "mcr.microsoft.com/k8se/quickstart:latest"
+  );
+  let imageHcl: string;
+  if (loginServer && !isFullyQualifiedContainerImage(rawImage)) {
+    imageHcl = `"\${${loginServer}}/${escapeHclString(rawImage)}"`;
+  } else {
+    imageHcl = formatString(rawImage);
+  }
+
+  const cname = String(v.container_name ?? "app");
+  const useEnvVars = modularRefCtx?.currentModuleId === "container_apps";
+  const cpuExpr = useEnvVars ? "var.ca_cpu" : String(v.container_cpu ?? "0.25");
+  const memExpr = useEnvVars
+    ? "var.ca_memory"
+    : formatString(String(v.container_memory ?? "0.5Gi"));
+  const minExpr = useEnvVars
+    ? "var.ca_min_replicas"
+    : String(Number(v.min_replicas ?? 0));
+  const maxExpr = useEnvVars
+    ? "var.ca_max_replicas"
+    : String(Number(v.max_replicas ?? 10));
+
+  lines.push(`  template {
+    min_replicas = ${minExpr}
+    max_replicas = ${maxExpr}
+
+    container {
+      name   = ${formatString(cname)}
+      image  = ${imageHcl}
+      cpu    = ${cpuExpr}
+      memory = ${memExpr}
+    }
+  }`);
+
+  const port = Number(v.ingress_target_port ?? 80);
+  const transport = String(v.ingress_transport ?? "auto");
+  if (useEnvVars) {
+    lines.push(`  dynamic "ingress" {
+    for_each = var.ca_ingress_external ? [1] : []
+    content {
+      external_enabled = true
+      target_port      = ${port}
+      transport        = ${formatString(transport)}
+
+      traffic_weight {
+        latest_revision = true
+        percentage      = 100
+      }
+    }
+  }`);
+  } else if (v.ingress_enabled) {
+    lines.push(`  ingress {
+    external_enabled = true
+    target_port      = ${port}
+    transport        = ${formatString(transport)}
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }`);
+  }
+
+  return lines.join("\n");
+}
+
+function emitSubnetBlock(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const v = resource.values;
+  const def = getResourceType(resource.type)!;
+  const lines: string[] = [];
+  for (const field of def.fields) {
+    if (field.key === "delegation") continue;
+    const line = emitFieldValue(
+      field,
+      v[field.key],
+      resource,
+      resources,
+      sensitiveVars
+    );
+    if (line) lines.push(line);
+  }
+  if (String(v.delegation ?? "") === "Microsoft.App/environments") {
+    lines.push(`  delegation {
+    name = "Microsoft.App.environments"
+    service_delegation {
+      name    = "Microsoft.App/environments"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+    }
+  }`);
+  }
+  return lines.join("\n");
+}
+
+export function emitResourceBlock(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const def = getResourceType(resource.type);
+  if (!def) return `# Unknown type: ${resource.type}\n`;
+
+  if (resource.useExisting) {
+    return emitDataBlock(resource, def.fields);
+  }
+
+  let body: string;
+  if (resource.type === "azurerm_linux_virtual_machine") {
+    body = emitVmBlock(resource, resources, sensitiveVars);
+  } else if (resource.type === "azurerm_network_interface") {
+    body = emitNicBlock(resource, resources, sensitiveVars);
+  } else if (resource.type === "azurerm_linux_web_app") {
+    body = emitWebAppBlock(resource, resources, sensitiveVars);
+  } else if (resource.type === "azurerm_container_app_environment") {
+    body = emitContainerAppEnvBlock(resource, resources, sensitiveVars);
+  } else if (resource.type === "azurerm_container_app") {
+    body = emitContainerAppBlock(resource, resources, sensitiveVars);
+  } else if (resource.type === "azurerm_subnet") {
+    body = emitSubnetBlock(resource, resources, sensitiveVars);
+  } else {
+    const lines: string[] = [];
+    for (const field of def.fields) {
+      const line = emitFieldValue(
+        field,
+        resource.values[field.key],
+        resource,
+        resources,
+        sensitiveVars
+      );
+      if (line) lines.push(line);
+    }
+    if (resource.type === "azurerm_network_security_group") {
+      lines.push(emitNsgRules(resource.values));
+    }
+    // Key Vault needs tenant_id from client config
+    if (resource.type === "azurerm_key_vault") {
+      lines.push(`  tenant_id = data.azurerm_client_config.current.tenant_id`);
+    }
+    if (
+      resource.type === "azurerm_container_registry" &&
+      modularRefCtx?.currentModuleId === "container_registry"
+    ) {
+      const filtered = lines.filter((l) => !/^\s*sku\s*=/.test(l));
+      filtered.push(`  sku = var.acr_sku`);
+      body = filtered.filter(Boolean).join("\n");
+    } else {
+      body = lines.filter(Boolean).join("\n");
+    }
+  }
+
+  return `resource "${resource.type}" "${resource.tfName}" {\n${body}\n}\n`;
+}
+
+function emitDataBlock(resource: ResourceInstance, fields: FieldDef[]): string {
+  const lines: string[] = [];
+  const existingKeys = fields.filter((f) => f.existingKey);
+  for (const field of existingKeys) {
+    const val = resource.existingValues[field.key] ?? resource.values[field.key];
+    if (val === undefined || val === null || val === "") continue;
+    if (isReferenceValue(val)) continue; // existing should be literal
+    lines.push(`  ${field.key} = ${formatString(String(val))}`);
+  }
+  // Always need name for most data sources; ensure at least something
+  if (lines.length === 0) {
+    lines.push(`  # TODO: fill in identifying attributes for existing resource`);
+    lines.push(`  name = "TODO"`);
+  }
+  return `data "${resource.type}" "${resource.tfName}" {\n${lines.join("\n")}\n}\n`;
+}
+
+function moduleLabel(id: string): string {
+  return MODULE_DEFS.find((m) => m.id === id)?.label ?? id;
+}
+
+function attrsToExport(r: ResourceInstance): string[] {
+  const def = getResourceType(r.type);
+  const attrs = new Set<string>(def?.outputs ?? ["id", "name"]);
+  if (r.type === "azurerm_container_registry") {
+    attrs.add("login_server");
+    attrs.add("admin_username");
+    attrs.add("admin_password");
+  }
+  if (r.type === "azurerm_user_assigned_identity") {
+    attrs.add("principal_id");
+    attrs.add("client_id");
+  }
+  return Array.from(attrs);
+}
+
+function sortResources(resources: ResourceInstance[]): ResourceInstance[] {
+  const order = [
+    "azurerm_resource_group",
+    "azurerm_virtual_network",
+    "azurerm_subnet",
+    "azurerm_network_security_group",
+    "azurerm_subnet_network_security_group_association",
+    "azurerm_public_ip",
+    "azurerm_network_interface",
+    "azurerm_linux_virtual_machine",
+    "azurerm_storage_account",
+    "azurerm_key_vault",
+    "azurerm_service_plan",
+    "azurerm_linux_web_app",
+    "azurerm_mssql_server",
+    "azurerm_mssql_database",
+    "azurerm_container_registry",
+    "azurerm_user_assigned_identity",
+    "azurerm_role_assignment",
+    "azurerm_log_analytics_workspace",
+    "azurerm_container_app_environment",
+    "azurerm_container_app",
+  ];
+  return [...resources].sort((a, b) => {
+    const ai = order.indexOf(a.type);
+    const bi = order.indexOf(b.type);
+    if (ai !== bi) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    return a.tfName.localeCompare(b.tfName);
+  });
+}
+
+function generateConfigTf(): string {
+  return `terraform {
+  required_version = "${TERRAFORM_VERSION}"
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "${AZURERM_VERSION}"
+    }
+  }
+
+  # Partial backend — supply details at init time:
+  #   terraform init -backend-config=environments/backend.dev.hcl
+  backend "azurerm" {}
+}
+
+provider "azurerm" {
+  features {}
+}
+
+data "azurerm_client_config" "current" {}
+`;
+}
+
+function generateRootVariables(
+  config: ProjectConfig,
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const parts: string[] = [];
+
+  parts.push(`variable "project_name" {
+  description = "Project name used for tagging and naming"
+  type        = string
+  default     = ${formatString(config.name)}
+}
+`);
+
+  parts.push(`variable "location" {
+  description = "Default Azure region"
+  type        = string
+  default     = ${formatString(config.location)}
+}
+`);
+
+  parts.push(`variable "naming_prefix" {
+  description = "Prefix applied to resource names"
+  type        = string
+  default     = ${formatString(config.namingPrefix)}
+}
+`);
+
+  const tagEntries = Object.entries(config.tags);
+  const tagDefault =
+    tagEntries.length === 0
+      ? "{}"
+      : `{\n${tagEntries.map(([k, v]) => `    ${k} = ${formatString(v)}`).join("\n")}\n  }`;
+
+  parts.push(`variable "tags" {
+  description = "Common tags applied to resources (override per environment via -var-file)"
+  type        = map(string)
+  default     = ${tagDefault}
+}
+`);
+
+  parts.push(`variable "environment" {
+  description = "Environment name (dev, staging, prod, …)"
+  type        = string
+  default     = "dev"
+}
+`);
+
+  parts.push(`variable "acr_sku" {
+  description = "Azure Container Registry SKU (Basic | Standard | Premium)"
+  type        = string
+  default     = "Basic"
+}
+`);
+
+  parts.push(`variable "ca_cpu" {
+  description = "Default Container App CPU (cores)"
+  type        = number
+  default     = 0.25
+}
+`);
+
+  parts.push(`variable "ca_memory" {
+  description = "Default Container App memory"
+  type        = string
+  default     = "0.5Gi"
+}
+`);
+
+  parts.push(`variable "ca_min_replicas" {
+  description = "Default Container App min replicas"
+  type        = number
+  default     = 0
+}
+`);
+
+  parts.push(`variable "ca_max_replicas" {
+  description = "Default Container App max replicas"
+  type        = number
+  default     = 3
+}
+`);
+
+  parts.push(`variable "ca_ingress_external" {
+  description = "Expose Container Apps with external ingress"
+  type        = bool
+  default     = true
+}
+`);
+
+  for (const sv of sensitiveVars) {
+    parts.push(`variable "${sv.name}" {
+  description = ${formatString(sv.description)}
+  type        = string
+  sensitive   = true
+}
+`);
+  }
+
+  return parts.join("\n");
+}
+
+function formatTagsHcl(tags: Record<string, string>): string {
+  const entries = Object.entries(tags);
+  if (entries.length === 0) return "{}";
+  const lines = entries.map(([k, v]) => `  ${k} = ${formatString(String(v))}`);
+  return `{\n${lines.join("\n")}\n}`;
+}
+
+function generateEnvTfvars(
+  config: ProjectConfig,
+  env: string,
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const tags = envTags(config, env);
+  const prefix =
+    env === "dev"
+      ? `${config.namingPrefix}-dev`
+      : env === "staging"
+        ? `${config.namingPrefix}-stg`
+        : `${config.namingPrefix}-prd`;
+
+  const knobs =
+    env === "dev"
+      ? {
+          acr_sku: "Basic",
+          ca_cpu: "0.25",
+          ca_memory: "0.5Gi",
+          ca_min_replicas: "0",
+          ca_max_replicas: "2",
+          ca_ingress_external: "true",
+        }
+      : env === "staging"
+        ? {
+            acr_sku: "Standard",
+            ca_cpu: "0.5",
+            ca_memory: "1Gi",
+            ca_min_replicas: "1",
+            ca_max_replicas: "5",
+            ca_ingress_external: "true",
+          }
+        : {
+            acr_sku: "Premium",
+            ca_cpu: "1.0",
+            ca_memory: "2Gi",
+            ca_min_replicas: "2",
+            ca_max_replicas: "10",
+            ca_ingress_external: "false",
+          };
+
+  const lines: string[] = [
+    `# Environment: ${env}`,
+    `# Usage: terraform plan -var-file=environments/${env}.tfvars`,
+    `# Fill sensitive values before apply. Do not commit real secrets.`,
+    ``,
+    `project_name  = ${formatString(config.name)}`,
+    `location      = ${formatString(config.location)}`,
+    `naming_prefix = ${formatString(prefix)}`,
+    `environment   = ${formatString(env)}`,
+    `tags = ${formatTagsHcl(tags)}`,
+    ``,
+    `# Per-environment sizing`,
+    `acr_sku             = ${formatString(knobs.acr_sku)}`,
+    `ca_cpu              = ${knobs.ca_cpu}`,
+    `ca_memory           = ${formatString(knobs.ca_memory)}`,
+    `ca_min_replicas     = ${knobs.ca_min_replicas}`,
+    `ca_max_replicas     = ${knobs.ca_max_replicas}`,
+    `ca_ingress_external = ${knobs.ca_ingress_external}`,
+  ];
+  for (const sv of sensitiveVars) {
+    lines.push(``);
+    lines.push(`# ${sv.description}`);
+    lines.push(`${sv.name} = "CHANGE_ME_${env.toUpperCase()}"`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+function generateBackendHcl(config: ProjectConfig, env: string): string {
+  const key = `${config.name.replace(/[^a-zA-Z0-9-_]/g, "-").toLowerCase()}/${env}.terraform.tfstate`;
+  return `# Remote state backend config for ${env}
+# terraform init -reconfigure -backend-config=environments/backend.${env}.hcl
+#
+# Create the storage account / container once (shared across envs), then point
+# each environment at a distinct state key.
+
+resource_group_name  = "rg-terraform-state"
+storage_account_name = "sttfstateCHANGE_ME"
+container_name       = "tfstate"
+key                  = "${key}"
+`;
+}
+
+function generateModuleOutputs(moduleResources: ResourceInstance[]): string {
+  const parts: string[] = [];
+  for (const r of moduleResources) {
+    const prefix = r.useExisting
+      ? `data.${r.type}.${r.tfName}`
+      : `${r.type}.${r.tfName}`;
+    for (const attr of attrsToExport(r)) {
+      const sensitive =
+        attr === "admin_password" ? "\n  sensitive   = true" : "";
+      parts.push(`output "${outputName(r, attr)}" {
+  description = "${attr} of ${r.type}.${r.tfName}"
+  value       = ${prefix}.${attr}${sensitive}
+}
+`);
+    }
+  }
+  return parts.join("\n") || `# No outputs\n`;
+}
+
+function generateModuleVariables(
+  moduleId: string,
+  inputs: CrossModuleInput[],
+  sensitiveForModule: GenerateResult["sensitiveVars"]
+): string {
+  const parts: string[] = [];
+  for (const inp of inputs) {
+    parts.push(`variable "${inp.varName}" {
+  description = "From module.${inp.fromModuleId} → ${inp.fromResource.type}.${inp.fromResource.tfName}.${inp.attr}"
+  type        = string
+}
+`);
+  }
+  for (const sv of sensitiveForModule) {
+    parts.push(`variable "${sv.name}" {
+  description = ${formatString(sv.description)}
+  type        = string
+  sensitive   = true
+}
+`);
+  }
+  if (moduleId === "container_registry") {
+    parts.push(`variable "acr_sku" {
+  description = "ACR SKU from root (per-environment)"
+  type        = string
+}
+`);
+  }
+  if (moduleId === "container_apps") {
+    parts.push(`variable "ca_cpu" {
+  type = number
+}
+`);
+    parts.push(`variable "ca_memory" {
+  type = string
+}
+`);
+    parts.push(`variable "ca_min_replicas" {
+  type = number
+}
+`);
+    parts.push(`variable "ca_max_replicas" {
+  type = number
+}
+`);
+    parts.push(`variable "ca_ingress_external" {
+  type = bool
+}
+`);
+  }
+  if (parts.length === 0) {
+    return `# No module inputs\n`;
+  }
+  return parts.join("\n");
+}
+
+function sensitiveVarsUsedInHcl(
+  hcl: string,
+  all: GenerateResult["sensitiveVars"]
+): GenerateResult["sensitiveVars"] {
+  return all.filter((s) => hcl.includes(`var.${s.name}`));
+}
+
+function generateRootMain(
+  orderedModules: string[],
+  moduleInputs: Map<string, CrossModuleInput[]>,
+  moduleSensitive: Map<string, GenerateResult["sensitiveVars"]>
+): string {
+  const parts: string[] = [
+    `# Root module — wires child modules`,
+    `# Generated by Azure TF Builder`,
+    ``,
+  ];
+
+  for (const mid of orderedModules) {
+    const inputs = moduleInputs.get(mid) ?? [];
+    const sens = moduleSensitive.get(mid) ?? [];
+    parts.push(`module "${mid}" {`);
+    parts.push(`  source = "./modules/${mid}"`);
+    parts.push(``);
+    for (const inp of inputs) {
+      parts.push(
+        `  ${inp.varName} = module.${inp.fromModuleId}.${outputName(inp.fromResource, inp.attr)}`
+      );
+    }
+    for (const sv of sens) {
+      parts.push(`  ${sv.name} = var.${sv.name}`);
+    }
+    if (mid === "container_registry") {
+      parts.push(`  acr_sku = var.acr_sku`);
+    }
+    if (mid === "container_apps") {
+      parts.push(`  ca_cpu              = var.ca_cpu`);
+      parts.push(`  ca_memory           = var.ca_memory`);
+      parts.push(`  ca_min_replicas     = var.ca_min_replicas`);
+      parts.push(`  ca_max_replicas     = var.ca_max_replicas`);
+      parts.push(`  ca_ingress_external = var.ca_ingress_external`);
+    }
+    if (
+      inputs.length === 0 &&
+      sens.length === 0 &&
+      mid !== "container_registry" &&
+      mid !== "container_apps"
+    ) {
+      parts.push(`  # (no inputs)`);
+    }
+    parts.push(`}`);
+    parts.push(``);
+  }
+
+  if (orderedModules.length === 0) {
+    parts.push(`# Add resources in the Azure TF Builder UI, then re-export.`);
+    parts.push(``);
+  }
+
+  return parts.join("\n");
+}
+
+function generateRootOutputs(
+  orderedModules: string[],
+  partitioned: Map<string, ResourceInstance[]>
+): string {
+  const parts: string[] = [
+    `# Re-export key module outputs for convenience`,
+    ``,
+  ];
+  for (const mid of orderedModules) {
+    const resources = partitioned.get(mid) ?? [];
+    for (const r of resources) {
+      for (const attr of attrsToExport(r)) {
+        if (attr === "admin_password") continue;
+        const out = outputName(r, attr);
+        parts.push(`output "${mid}__${out}" {
+  description = "${moduleLabel(mid)} / ${r.type}.${r.tfName}.${attr}"
+  value       = module.${mid}.${out}
+}
+`);
+      }
+    }
+  }
+  return parts.join("\n") || `# No outputs yet.\n`;
+}
+
+function generateProjectReadme(
+  config: ProjectConfig,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"],
+  orderedModules: string[]
+): string {
+  const existing = resources.filter((r) => r.useExisting);
+  const managed = resources.filter((r) => !r.useExisting);
+  const caCount = resources.filter(
+    (r) => r.type === "azurerm_container_app"
+  ).length;
+
+  return `# ${config.name} — Azure Terraform
+
+Generated by **Azure TF Builder** (modular layout).
+
+## Prerequisites
+
+- [Terraform](https://www.terraform.io/downloads) ${TERRAFORM_VERSION}
+- Azure CLI authenticated (\`az login\`) or a service principal
+- Provider: \`hashicorp/azurerm\` ${AZURERM_VERSION}
+
+## Quick start
+
+\`\`\`bash
+# 1) Init with remote state (partial backend in config.tf)
+terraform init -backend-config=environments/backend.dev.hcl
+
+# 2) Plan / apply with environment values
+terraform plan  -var-file=environments/dev.tfvars
+terraform apply -var-file=environments/dev.tfvars
+\`\`\`
+
+Edit \`environments/*.tfvars\` for per-env sizing (ACR SKU, CPU/memory/replicas, ingress).
+Fill any \`CHANGE_ME_*\` sensitive placeholders and the storage account name in \`environments/backend.*.hcl\` before apply.
+
+### Switching environments
+
+\`\`\`bash
+terraform init -reconfigure -backend-config=environments/backend.prod.hcl
+terraform plan -var-file=environments/prod.tfvars
+\`\`\`
+
+## Layout
+
+\`\`\`
+config.tf                 # terraform + provider + backend placeholder
+main.tf                   # root module calls
+variables.tf
+outputs.tf
+environments/
+  dev.tfvars / staging.tfvars / prod.tfvars
+  backend.dev.hcl / backend.staging.hcl / backend.prod.hcl
+modules/
+${orderedModules.map((m) => `  ${m}/`).join("\n") || "  (none yet)"}
+README.md
+\`\`\`
+
+### Modules in this project
+
+${
+  orderedModules.length === 0
+    ? "_None_"
+    : orderedModules
+        .map((m) => `- \`modules/${m}\` — ${moduleLabel(m)}`)
+        .join("\n")
+}
+
+## Project settings
+
+| Setting | Value |
+|---------|-------|
+| Name | ${config.name} |
+| Location | ${config.location} |
+| Naming prefix | ${config.namingPrefix || "(none)"} |
+| Container apps | ${caCount} |
+
+## Resources
+
+### Managed — ${managed.length}
+
+${
+  managed.length === 0
+    ? "_None_"
+    : managed.map((r) => `- \`${r.type}.${r.tfName}\``).join("\n")
+}
+
+### Existing (data sources) — ${existing.length}
+
+${
+  existing.length === 0
+    ? "_None_"
+    : existing.map((r) => `- \`data.${r.type}.${r.tfName}\``).join("\n")
+}
+
+${
+  existing.length > 0
+    ? `
+> **Using existing resources:** Emitted as Terraform \`data\` sources inside the relevant module. Terraform will not create or destroy them.
+`
+    : ""
+}
+
+## Sensitive variables
+
+${
+  sensitiveVars.length === 0
+    ? "_No sensitive variables._"
+    : sensitiveVars
+        .map((s) => `- \`var.${s.name}\` — ${s.description}`)
+        .join("\n")
+}
+
+Pass secrets via \`-var-file=environments/<env>.tfvars\` or \`TF_VAR_*\` environment variables — never hardcode them in \`.tf\` files.
+`;
+}
+
+export function generateProject(
+  config: ProjectConfig,
+  resources: ResourceInstance[]
+): GenerateResult {
+  const sensitiveVars: GenerateResult["sensitiveVars"] = [];
+  const partitioned = partitionByModule(resources);
+  const orderedModules = moduleOrder(Array.from(partitioned.keys()));
+  const moduleOf = createModuleOfMap(resources);
+
+  const files: GeneratedFiles = {};
+  const moduleInputs = new Map<string, CrossModuleInput[]>();
+  const moduleSensitive = new Map<
+    string,
+    GenerateResult["sensitiveVars"]
+  >();
+
+  for (const mid of orderedModules) {
+    const modResources = sortResources(partitioned.get(mid) ?? []);
+    const ctx: ModularRefContext = {
+      currentModuleId: mid,
+      moduleOf,
+      inputs: new Map(),
+    };
+    setModularRefContext(ctx);
+
+    const bodyParts: string[] = [
+      `# Module: ${mid} (${moduleLabel(mid)})`,
+      `# Generated by Azure TF Builder`,
+      ``,
+    ];
+    for (const r of modResources) {
+      bodyParts.push(emitResourceBlock(r, resources, sensitiveVars));
+    }
+    setModularRefContext(null);
+
+    const mainHcl = bodyParts.join("\n");
+    files[`modules/${mid}/main.tf`] = mainHcl;
+    moduleInputs.set(mid, Array.from(ctx.inputs.values()));
+    files[`modules/${mid}/outputs.tf`] = generateModuleOutputs(modResources);
+    files[`modules/${mid}/variables.tf`] = ""; // filled after sensitive dedupe
+  }
+
+  const seen = new Set<string>();
+  const uniqueSensitive = sensitiveVars.filter((s) => {
+    if (seen.has(s.name)) return false;
+    seen.add(s.name);
+    return true;
+  });
+
+  for (const mid of orderedModules) {
+    const mainHcl = files[`modules/${mid}/main.tf`];
+    const sens = sensitiveVarsUsedInHcl(mainHcl, uniqueSensitive);
+    moduleSensitive.set(mid, sens);
+    files[`modules/${mid}/variables.tf`] = generateModuleVariables(
+      mid,
+      moduleInputs.get(mid) ?? [],
+      sens
+    );
+  }
+
+  files["config.tf"] = generateConfigTf();
+  files["variables.tf"] = generateRootVariables(config, uniqueSensitive);
+  files["main.tf"] = generateRootMain(
+    orderedModules,
+    moduleInputs,
+    moduleSensitive
+  );
+  files["outputs.tf"] = generateRootOutputs(orderedModules, partitioned);
+
+  for (const env of ["dev", "staging", "prod"] as const) {
+    files[`environments/${env}.tfvars`] = generateEnvTfvars(
+      config,
+      env,
+      uniqueSensitive
+    );
+    files[`environments/backend.${env}.hcl`] = generateBackendHcl(config, env);
+  }
+
+  files["README.md"] = generateProjectReadme(
+    config,
+    sortResources(resources),
+    uniqueSensitive,
+    orderedModules
+  );
+
+  return { files, sensitiveVars: uniqueSensitive };
+}
+
+export function previewHcl(
+  config: ProjectConfig,
+  resources: ResourceInstance[]
+): string {
+  const { files } = generateProject(config, resources);
+  const paths = Object.keys(files).sort((a, b) => {
+    const rank = (p: string) => {
+      if (!p.includes("/")) return 0;
+      if (p.startsWith("environments/")) return 1;
+      if (p.startsWith("modules/")) return 2;
+      return 3;
+    };
+    const d = rank(a) - rank(b);
+    return d !== 0 ? d : a.localeCompare(b);
+  });
+  return paths.map((p) => `# ===== ${p} =====\n${files[p]}`).join("\n");
+}
