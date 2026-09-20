@@ -158,7 +158,7 @@ function emitFieldValue(
     return null;
   }
 
-  // Function App: nested site_config / storage / identity handled specially
+  // Function App: nested site_config / storage / identity / App Insights handled specially
   if (
     resource.type === "azurerm_linux_function_app" &&
     [
@@ -167,6 +167,7 @@ function emitFieldValue(
       "runtime_version",
       "identity_type",
       "user_assigned_identity_id",
+      "application_insights_id",
     ].includes(field.key)
   ) {
     return null;
@@ -431,6 +432,7 @@ function emitFunctionAppBlock(
         "runtime_version",
         "identity_type",
         "user_assigned_identity_id",
+        "application_insights_id",
       ].includes(field.key)
     ) {
       continue;
@@ -490,6 +492,17 @@ ${stackInner}
     type = "SystemAssigned"
   }`);
     }
+  }
+
+  // App Insights: catalogue pick → connection string (+ instrumentation key) azurerm 4.x
+  const aiRef = v.application_insights_id;
+  if (isReferenceValue(aiRef)) {
+    lines.push(
+      `  application_insights_connection_string = ${resolveRef({ resourceId: aiRef.resourceId, attr: "connection_string" }, resources)}`
+    );
+    lines.push(
+      `  application_insights_key               = ${resolveRef({ resourceId: aiRef.resourceId, attr: "instrumentation_key" }, resources)}`
+    );
   }
 
   return lines.join("\n");
@@ -1119,6 +1132,10 @@ function attrsToExport(r: ResourceInstance): string[] {
   if (r.type === "azurerm_key_vault") {
     attrs.add("vault_uri");
   }
+  if (r.type === "azurerm_application_insights") {
+    attrs.add("connection_string");
+    attrs.add("instrumentation_key");
+  }
   return Array.from(attrs);
 }
 
@@ -1140,6 +1157,7 @@ function sortResources(resources: ResourceInstance[]): ResourceInstance[] {
     "azurerm_service_plan",
     "azurerm_linux_web_app",
     "azurerm_linux_function_app",
+    "azurerm_application_insights",
     "azurerm_mssql_server",
     "azurerm_mssql_database",
     "azurerm_container_registry",
@@ -1348,7 +1366,11 @@ function generateModuleOutputs(moduleResources: ResourceInstance[]): string {
       : `${r.type}.${r.tfName}`;
     for (const attr of attrsToExport(r)) {
       const sensitive =
-        attr === "admin_password" ? "\n  sensitive   = true" : "";
+        attr === "admin_password" ||
+        attr === "connection_string" ||
+        attr === "instrumentation_key"
+          ? "\n  sensitive   = true"
+          : "";
       parts.push(`output "${outputName(r, attr)}" {
   description = "${attr} of ${r.type}.${r.tfName}"
   value       = ${prefix}.${attr}${sensitive}
@@ -1489,7 +1511,12 @@ function generateRootOutputs(
     const resources = partitioned.get(mid) ?? [];
     for (const r of resources) {
       for (const attr of attrsToExport(r)) {
-        if (attr === "admin_password") continue;
+        if (
+          attr === "admin_password" ||
+          attr === "connection_string" ||
+          attr === "instrumentation_key"
+        )
+          continue;
         const out = outputName(r, attr);
         parts.push(`output "${mid}__${out}" {
   description = "${moduleLabel(mid)} / ${r.type}.${r.tfName}.${attr}"

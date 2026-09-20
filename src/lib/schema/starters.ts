@@ -134,12 +134,13 @@ export const STARTERS: StarterTemplate[] = [
     id: "storage-function",
     label: "Storage + Function App",
     description:
-      "Shared RG + storage, Y1 Consumption plan + Linux Function App (Node 20) scoped to dev",
+      "Shared RG + storage, Y1 Consumption plan + Linux Function App (Node 20) + Application Insights scoped to dev",
     icon: "⚡",
     build: (config, makeId) => {
       const rgId = makeId();
       const stId = makeId();
       const planId = makeId();
+      const aiId = makeId();
       const funcId = makeId();
       const p = config.namingPrefix;
       return [
@@ -191,6 +192,21 @@ export const STARTERS: StarterTemplate[] = [
           scope: envScope("dev"),
         },
         {
+          id: aiId,
+          type: "azurerm_application_insights",
+          tfName: "func",
+          useExisting: false,
+          values: {
+            name: named(p, "appi"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            application_type: "web",
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: envScope("dev"),
+        },
+        {
           id: funcId,
           type: "azurerm_linux_function_app",
           tfName: "main",
@@ -201,6 +217,7 @@ export const STARTERS: StarterTemplate[] = [
             location: { resourceId: rgId, attr: "location" },
             service_plan_id: { resourceId: planId, attr: "id" },
             storage_account_id: { resourceId: stId, attr: "id" },
+            application_insights_id: { resourceId: aiId, attr: "id" },
             runtime_stack: "node",
             runtime_version: "20",
             https_only: true,

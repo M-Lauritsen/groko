@@ -70,7 +70,7 @@ function main() {
   assert.match(allHcl(webGen.files), /resource "azurerm_mssql_server"/);
   console.log("✓ Web App + SQL modular HCL looks good");
 
-  // 3) Storage + Function App
+  // 3) Storage + Function App (+ Application Insights)
   nextId = 1;
   const storage = getStarter("storage-function")!.build(config, makeId);
   assert.ok(
@@ -78,8 +78,16 @@ function main() {
     "starter must include Function App"
   );
   assert.ok(
+    storage.some((r) => r.type === "azurerm_application_insights"),
+    "starter must include Application Insights"
+  );
+  assert.ok(
     storage.find((r) => r.type === "azurerm_linux_function_app")?.scope.kind ===
       "environment"
+  );
+  assert.ok(
+    storage.find((r) => r.type === "azurerm_application_insights")?.scope
+      .kind === "environment"
   );
   const stGen = generateProject(
     { ...config, starter: "storage-function" },
@@ -88,11 +96,15 @@ function main() {
   const stHcl = allHcl(stGen.files);
   assert.match(stHcl, /sku_name\s*=\s*"Y1"/);
   assert.match(stHcl, /resource "azurerm_linux_function_app"/);
+  assert.match(stHcl, /resource "azurerm_application_insights"/);
   assert.match(stHcl, /storage_account_name/);
   assert.match(stHcl, /storage_account_access_key/);
   assert.match(stHcl, /primary_access_key/);
   assert.match(stHcl, /application_stack/);
   assert.match(stHcl, /node_version\s*=\s*"20"/);
+  assert.match(stHcl, /application_insights_connection_string/);
+  assert.match(stHcl, /application_insights_key/);
+  assert.match(stHcl, /connection_string/);
   assert.ok(stGen.files["modules/app_service/main.tf"]);
   assert.ok(stGen.files["modules/storage/main.tf"]);
   assert.match(
@@ -100,10 +112,14 @@ function main() {
     /storage_account_name\s*=/
   );
   assert.match(
+    stGen.files["modules/app_service/main.tf"],
+    /resource "azurerm_application_insights"/
+  );
+  assert.match(
     stGen.files["modules/storage/outputs.tf"],
     /primary_access_key/
   );
-  console.log("✓ Storage + Function App modular HCL looks good");
+  console.log("✓ Storage + Function App + App Insights modular HCL looks good");
 
   // 4) ACR + Container Apps starter — MI + VNet + AcrPull
   nextId = 1;
@@ -720,7 +736,22 @@ resource "azurerm_container_app" "web" {
             r.scope.environmentId === "dev"
         )
     );
-    console.log("✓ Storage+Function starter: shared storage + env-scoped Function App");
+    assert.ok(
+      funcStarter
+        .filter((r) => r.type === "azurerm_application_insights")
+        .every(
+          (r) =>
+            r.scope.kind === "environment" &&
+            r.scope.environmentId === "dev"
+        )
+    );
+    const funcRes = funcStarter.find(
+      (r) => r.type === "azurerm_linux_function_app"
+    );
+    assert.ok(isReferenceValue(funcRes!.values.application_insights_id));
+    console.log(
+      "✓ Storage+Function starter: shared storage + env-scoped Function App + App Insights"
+    );
   }
 
   // 14b) Function App catalogue HCL + import round-trip (best-effort)
@@ -860,6 +891,213 @@ resource "azurerm_linux_function_app" "main" {
     const settings = func!.values.app_settings as Record<string, string>;
     assert.equal(settings.CUSTOM_SETTING, "yes");
     console.log("✓ Function App HCL emit + import mapper");
+  }
+
+  // 14c) Application Insights catalogue + Function App optional ref (not buried checkbox)
+  {
+    nextId = 1;
+    const rgId = makeId();
+    const stId = makeId();
+    const planId = makeId();
+    const lawId = makeId();
+    const aiId = makeId();
+    const funcId = makeId();
+    const resources: ResourceInstance[] = [
+      {
+        id: rgId,
+        type: "azurerm_resource_group",
+        tfName: "main",
+        useExisting: false,
+        values: { name: "rg-ai", location: "westeurope", tags: {} },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: stId,
+        type: "azurerm_storage_account",
+        tfName: "main",
+        useExisting: false,
+        values: {
+          name: "stai001",
+          resource_group_name: { resourceId: rgId, attr: "name" },
+          location: { resourceId: rgId, attr: "location" },
+          account_tier: "Standard",
+          account_replication_type: "LRS",
+          account_kind: "StorageV2",
+          min_tls_version: "TLS1_2",
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: planId,
+        type: "azurerm_service_plan",
+        tfName: "func",
+        useExisting: false,
+        values: {
+          name: "asp-func",
+          resource_group_name: { resourceId: rgId, attr: "name" },
+          location: { resourceId: rgId, attr: "location" },
+          os_type: "Linux",
+          sku_name: "Y1",
+        },
+        existingValues: {},
+        scope: envScope("dev"),
+      },
+      {
+        id: lawId,
+        type: "azurerm_log_analytics_workspace",
+        tfName: "main",
+        useExisting: false,
+        values: {
+          name: "log-ai",
+          resource_group_name: { resourceId: rgId, attr: "name" },
+          location: { resourceId: rgId, attr: "location" },
+          sku: "PerGB2018",
+          retention_in_days: 30,
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: aiId,
+        type: "azurerm_application_insights",
+        tfName: "func",
+        useExisting: false,
+        values: {
+          name: "appi-func",
+          resource_group_name: { resourceId: rgId, attr: "name" },
+          location: { resourceId: rgId, attr: "location" },
+          application_type: "web",
+          workspace_id: { resourceId: lawId, attr: "id" },
+          tags: {},
+        },
+        existingValues: {},
+        scope: envScope("dev"),
+      },
+      {
+        id: funcId,
+        type: "azurerm_linux_function_app",
+        tfName: "main",
+        useExisting: false,
+        values: {
+          name: "func-ai",
+          resource_group_name: { resourceId: rgId, attr: "name" },
+          location: { resourceId: rgId, attr: "location" },
+          service_plan_id: { resourceId: planId, attr: "id" },
+          storage_account_id: { resourceId: stId, attr: "id" },
+          application_insights_id: { resourceId: aiId, attr: "id" },
+          runtime_stack: "node",
+          runtime_version: "20",
+          https_only: true,
+          public_network_access_enabled: true,
+          app_settings: {},
+          identity_type: "None",
+          tags: {},
+        },
+        existingValues: {},
+        scope: envScope("dev"),
+      },
+    ];
+    const gen = generateProject(config, resources);
+    const appSvc = gen.files["modules/app_service/main.tf"];
+    assert.ok(appSvc);
+    assert.match(appSvc, /resource "azurerm_application_insights" "func"/);
+    assert.match(appSvc, /application_type\s*=\s*"web"/);
+    assert.match(appSvc, /workspace_id\s*=/);
+    assert.match(appSvc, /application_insights_connection_string\s*=/);
+    assert.match(appSvc, /application_insights_key\s*=/);
+    assert.match(appSvc, /connection_string/);
+    assert.match(appSvc, /instrumentation_key/);
+    // Sensitive AI outputs
+    const outs = gen.files["modules/app_service/outputs.tf"];
+    assert.match(outs, /connection_string/);
+    assert.match(outs, /sensitive\s*=\s*true/);
+
+    // Existing App Insights data source
+    const existingAi: ResourceInstance[] = [
+      {
+        id: "ai-exist",
+        type: "azurerm_application_insights",
+        tfName: "existing",
+        useExisting: true,
+        values: {},
+        existingValues: {
+          name: "appi-existing",
+          resource_group_name: "rg-ai",
+        },
+        scope: envScope("dev"),
+      },
+    ];
+    const existGen = generateProject(config, existingAi);
+    assert.match(
+      existGen.files["modules/app_service/main.tf"],
+      /data "azurerm_application_insights" "existing"/
+    );
+
+    // Import: AI resource + Function wired via connection_string
+    const fixture = `
+resource "azurerm_resource_group" "main" {
+  name     = "rg-ai-import"
+  location = "westeurope"
+}
+
+resource "azurerm_application_insights" "func" {
+  name                = "appi-import"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  application_type    = "web"
+}
+
+resource "azurerm_storage_account" "main" {
+  name                     = "staiimport"
+  resource_group_name      = azurerm_resource_group.main.name
+  location                 = azurerm_resource_group.main.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_service_plan" "func" {
+  name                = "asp-func"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  os_type             = "Linux"
+  sku_name            = "Y1"
+}
+
+resource "azurerm_linux_function_app" "main" {
+  name                       = "func-ai-import"
+  resource_group_name        = azurerm_resource_group.main.name
+  location                   = azurerm_resource_group.main.location
+  service_plan_id            = azurerm_service_plan.func.id
+  storage_account_name       = azurerm_storage_account.main.name
+  storage_account_access_key = azurerm_storage_account.main.primary_access_key
+  application_insights_connection_string = azurerm_application_insights.func.connection_string
+  https_only                 = true
+
+  site_config {
+    application_stack {
+      node_version = "20"
+    }
+  }
+}
+`;
+    const parsed = parseHcl(fixture, "ai.tf");
+    const summary = mapToProject(parsed);
+    const ai = summary.resources.find(
+      (r) => r.type === "azurerm_application_insights"
+    );
+    assert.ok(ai, "Application Insights should be imported");
+    assert.equal(ai!.values.application_type, "web");
+    const func = summary.resources.find(
+      (r) => r.type === "azurerm_linux_function_app"
+    );
+    assert.ok(func);
+    assert.ok(
+      isReferenceValue(func!.values.application_insights_id),
+      "Function App should ref Application Insights"
+    );
+    console.log("✓ Application Insights catalogue + Function App optional ref");
   }
 
 

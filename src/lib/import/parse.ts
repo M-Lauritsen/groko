@@ -399,6 +399,9 @@ const REF_ATTRS = new Set([
   "admin_username",
   "principal_id",
   "vault_uri",
+  "primary_access_key",
+  "connection_string",
+  "instrumentation_key",
 ]);
 
 /** type.name.attr  or  data.type.name.attr */

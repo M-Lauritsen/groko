@@ -30,6 +30,9 @@ const REF_ATTRS = new Set<string>([
   "admin_username",
   "principal_id",
   "vault_uri",
+  "primary_access_key",
+  "connection_string",
+  "instrumentation_key",
 ]);
 
 export interface SkippedItem {
@@ -391,6 +394,14 @@ export function mapToProject(
       ) {
         // Derived from storage_account_id on emit — skip
         continue;
+      }
+      // Function App: AI connection string / key → catalogue application_insights_id
+      if (
+        block.type === "azurerm_linux_function_app" &&
+        (key === "application_insights_connection_string" ||
+          key === "application_insights_key")
+      ) {
+        mapKey = "application_insights_id";
       }
       const field = fieldByHclKey(typeDef.fields, mapKey);
       if (!field) {

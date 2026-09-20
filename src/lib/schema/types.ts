@@ -11,7 +11,7 @@ export type FieldType =
   | "env_list"
   | "secret_list";
 
-export type ReferenceAttr = "id" | "name" | "location" | "resource_group_name" | "login_server" | "admin_username" | "principal_id" | "vault_uri" | "primary_access_key";
+export type ReferenceAttr = "id" | "name" | "location" | "resource_group_name" | "login_server" | "admin_username" | "principal_id" | "vault_uri" | "primary_access_key" | "connection_string" | "instrumentation_key";
 
 export interface FieldOption {
   value: string;

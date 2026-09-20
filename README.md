@@ -143,17 +143,21 @@ Same domain shape for all three — first-class catalogue resources (forms, refs
 Export PE + DNS + VNet link → `modules/private_networking/`; KV → `modules/security/`; SQL → `modules/database/`; ACR → `modules/container_registry/`.
 
 
-## Function App
+## Function App + Application Insights
 
-First-class catalogue resource (forms, refs, scopes — not raw HCL):
+First-class catalogue resources (forms, refs, scopes — not raw HCL):
 
 | Resource | Typical scope | Notes |
 |----------|---------------|-------|
 | `azurerm_service_plan` | Shared or env | Already catalogued; use **Y1** for Consumption |
-| `azurerm_linux_function_app` | Env (e.g. dev) | Plan + storage + runtime stack/version; app settings as key=value; optional identity (advanced) |
+| `azurerm_linux_function_app` | Env (e.g. dev) | Plan + storage + runtime; optional **Application Insights** reference (same spine as other refs); app settings as key=value; optional identity (advanced) |
+| `azurerm_application_insights` | Env (e.g. dev) | Own catalogue card — name, RG, location, application_type, optional LAW `workspace_id` (reuse when present). Existing|Create on this card. |
 | `azurerm_storage_account` | Shared | Backend storage; emit uses `name` + `primary_access_key` |
+| `azurerm_log_analytics_workspace` | Shared | Already catalogued; optional link from App Insights for workspace-based mode |
 
-UX stays short: pick plan, storage, runtime — not every Functions setting. Starter **Storage + Function App** scaffolds shared RG/storage + Y1 plan + Linux Function App (Node 20) scoped to **dev**. Export goes to `modules/app_service/` (with storage cross-module inputs).
+UX stays short: pick plan, storage, runtime, and optionally wire Function App → App Insights via the reference picker — not every Functions / insights_* setting. When linked, emit uses azurerm 4.x `application_insights_connection_string` + `application_insights_key` from the Insights outputs.
+
+Starter **Storage + Function App** scaffolds shared RG/storage + Y1 plan + Linux Function App (Node 20) + Application Insights scoped to **dev** (Function wired to Insights). Export goes to `modules/app_service/` (with storage cross-module inputs).
 
 
 
@@ -165,7 +169,7 @@ Keyboard-only smoke path after `npm run dev`:
 2. **Import existing** (still on Environment) — Tab to **Upload Terraform**; choose `.tf` / zip. Review table shows domain labels (not raw HCL). Arrow/Tab to toggle **Existing | Create** and scope Shared/env. Continue → **Replace all** / **Merge into current** / **Cancel** (Esc back). Lands on **Resources** with an imported instance selected.
 3. **Continue to resources** — Header shows **Tier:** badge. Catalogue search has a visible **Search resources** label; rows show human labels + always-visible **+** (no hover-only add).
 4. **List | Graph** — Tab to the Resources view toggle; switch to **Graph**. Nodes are shared + active-env resources (Existing/Create + Shared vs env styling). Arrow/Tab to a node; **Enter** selects — the same **ResourceForm** (mode, scope, fields, deps/used-by) opens in the side panel (one selection model). Switch back to **List**; selection stays. Cross-env-blocked refs are not drawn as valid edges. Undo still works.
-5. Add **Linux Function App** (short card) → form opens with **Existing | Create** at top; toggle both modes. Add **Private DNS Zone** → defaults **Existing**.
+5. Add **Application Insights** (own card beside Function Apps) → **Existing | Create**; optionally link LAW. Add **Linux Function App** → optional **Application Insights** reference picker (not a settings dump). Add **Private DNS Zone** → defaults **Existing**.
 6. Toggle Existing/Create; fill an existing id/name field — hints use plain language (no `data.azurerm_…`).
 7. **Export** — Tier badge still visible; open **Folder structure** (tree + detail). Toggle **Map mode**; reassign a resource or domain group; confirm orphan list blocks **Download ZIP** until assigned or you confirm **Leave unmapped…**. Open Live HCL / Files; Download ZIP. HCL remains edge-only (Export/Import).
 

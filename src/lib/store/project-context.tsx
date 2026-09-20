@@ -416,6 +416,18 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
+        if (type === "azurerm_application_insights") {
+          const law = s.resources.find(
+            (r) => r.type === "azurerm_log_analytics_workspace"
+          );
+          if (law) {
+            values.workspace_id = {
+              resourceId: law.id,
+              attr: "id",
+            };
+          }
+        }
+
         if (type === "azurerm_resource_group") {
           values.location = s.config.location;
         }
