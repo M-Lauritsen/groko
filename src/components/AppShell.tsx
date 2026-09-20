@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { ProjectProvider, useProject } from "@/lib/store/project-context";
 import { ProjectSetup } from "@/components/project/ProjectSetup";
 import { EnvironmentsPanel } from "@/components/project/EnvironmentsPanel";
@@ -18,14 +18,60 @@ import { ImportTerraform } from "@/components/project/ImportTerraform";
 import { UndoRedoControls, UndoRedoKeyboard } from "@/components/history/UndoRedoControls";
 import { tierShortLabel } from "@/lib/schema/environments";
 import { TierBadge } from "@/components/project/TierBadge";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type MainTab = "environment" | "builder" | "export";
+type Theme = "light" | "dark";
+
+const THEME_KEY = "groko-theme";
+
+function getTheme(): Theme {
+  if (typeof window === "undefined") return "light";
+  const stored = window.localStorage.getItem(THEME_KEY);
+  if (stored === "dark" || stored === "light") return stored;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
+function subscribeToTheme(onChange: () => void) {
+  window.addEventListener("storage", onChange);
+  return () => window.removeEventListener("storage", onChange);
+}
 
 const MAIN_TABS: { id: MainTab; label: string }[] = [
   { id: "environment", label: "1. Environment" },
   { id: "builder", label: "2. Resources" },
   { id: "export", label: "3. Export" },
 ];
+
+function ThemeToggle() {
+  const theme = useSyncExternalStore(subscribeToTheme, getTheme, () => "light");
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }, [theme]);
+
+  function toggleTheme() {
+    const nextTheme: Theme = theme === "dark" ? "light" : "dark";
+    window.localStorage.setItem(THEME_KEY, nextTheme);
+    window.dispatchEvent(new Event("storage"));
+  }
+
+  return (
+    <Tooltip content={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}>
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={toggleTheme}
+        aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+      >
+        <span aria-hidden>{theme === "dark" ? "☀" : "☾"}</span>
+        <span className="hidden lg:inline">{theme === "dark" ? "Light" : "Dark"}</span>
+      </Button>
+    </Tooltip>
+  );
+}
 
 
 function ShellInner() {
@@ -74,6 +120,7 @@ function ShellInner() {
             }))}
           />
 
+          <ThemeToggle />
           <div className="hidden sm:flex items-center gap-2">
             <UndoRedoControls compact />
             <ImportTerraform
