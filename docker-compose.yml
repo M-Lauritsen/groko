@@ -1,0 +1,15 @@
+# How you run the Azure TF Builder web UI.
+# One service only — no Azure / Terraform sidecars.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    restart: unless-stopped

@@ -6,6 +6,8 @@ No auth. Generation is entirely client-side.
 
 ## Quick start
 
+### Local (npm)
+
 ```bash
 npm install
 npm run dev
@@ -17,6 +19,29 @@ Open [http://localhost:3000](http://localhost:3000).
 npm run build
 npm test
 ```
+
+### Docker Compose
+
+Run the web UI in a container (production image). Requires Docker with Compose v2.
+
+```bash
+docker compose up --build
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+```bash
+docker compose down
+```
+
+| | |
+|---|---|
+| Port | **3000** |
+| URL | http://localhost:3000 |
+| Start | `docker compose up --build` |
+| Stop | `docker compose down` |
+
+`npm run build` / `npm run start` still work on the host without Docker.
 
 
 ## Import existing Terraform
