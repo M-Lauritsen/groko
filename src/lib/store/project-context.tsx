@@ -14,6 +14,7 @@ import type {
 } from "../schema/types";
 import { getResourceType } from "../schema/resources";
 import { getStarter } from "../schema/starters";
+import { mergeImportedResources } from "../import/mapToProject";
 
 function uid(): string {
   return `r_${Math.random().toString(36).slice(2, 10)}`;
@@ -38,6 +39,10 @@ interface ProjectContextValue {
   removeResource: (id: string) => void;
   selectResource: (id: string | null) => void;
   getUniqueTfName: (type: string, preferred?: string) => string;
+  importResources: (
+    resources: ResourceInstance[],
+    mode: "merge" | "replace"
+  ) => void;
 }
 
 const ProjectContext = createContext<ProjectContextValue | null>(null);
@@ -318,6 +323,22 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+
+  const importResources = useCallback(
+    (resources: ResourceInstance[], mode: "merge" | "replace") => {
+      setState((s) => {
+        const next = mergeImportedResources(s.resources, resources, mode);
+        return {
+          ...s,
+          config: { ...s.config, starter: mode === "replace" ? "imported" : s.config.starter },
+          resources: next,
+          selectedResourceId: next[0]?.id ?? null,
+        };
+      });
+    },
+    []
+  );
+
   const selectResource = useCallback((id: string | null) => {
     setState((s) => ({ ...s, selectedResourceId: id }));
   }, []);
@@ -334,6 +355,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       removeResource,
       selectResource,
       getUniqueTfName,
+      importResources,
     }),
     [
       state,
@@ -346,6 +368,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       removeResource,
       selectResource,
       getUniqueTfName,
+      importResources,
     ]
   );
 

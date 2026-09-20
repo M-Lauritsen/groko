@@ -8,6 +8,7 @@ import { ResourceList } from "@/components/resources/ResourceList";
 import { ResourceForm } from "@/components/resources/ResourceForm";
 import { ExportPanel } from "@/components/export/ExportPanel";
 import { Button, Badge } from "@/components/ui/Field";
+import { ImportTerraform } from "@/components/project/ImportTerraform";
 
 type MainTab = "builder" | "export" | "setup";
 
@@ -57,6 +58,10 @@ function ShellInner() {
           </nav>
 
           <div className="hidden sm:flex items-center gap-2">
+            <ImportTerraform
+              compact
+              onImported={() => setTab("builder")}
+            />
             {tab !== "export" && (
               <Button variant="primary" size="sm" onClick={() => setTab("export")}>
                 Preview & download →
