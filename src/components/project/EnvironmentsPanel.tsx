@@ -7,6 +7,7 @@ import {
   normalizeScope,
   resourcesVisibleInEnv,
   scopeLabel,
+  tierShortLabel,
 } from "@/lib/schema/environments";
 import { getResourceType } from "@/lib/schema/resources";
 import type { Environment } from "@/lib/schema/types";
@@ -21,8 +22,14 @@ import {
   SelectInput,
   Checkbox,
 } from "@/components/ui/Field";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
-export function EnvironmentsPanel() {
+export function EnvironmentsPanel({
+  hideActiveSwitcher = false,
+}: {
+  /** When true, active env is switched in AppShell (Environment step). */
+  hideActiveSwitcher?: boolean;
+}) {
   const {
     state,
     setActiveEnvironment,
@@ -87,25 +94,20 @@ export function EnvironmentsPanel() {
           tfvars / backend hcl per environment id.
         </p>
 
-        <div className="flex flex-wrap gap-2 mb-4">
-          {environments.map((e) => (
-            <button
-              key={e.id}
-              type="button"
-              onClick={() => setActiveEnvironment(e.id)}
-              className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
-                e.id === active.id
-                  ? "border-sky-500 bg-sky-50 dark:bg-sky-950/40 text-sky-800 dark:text-sky-200 ring-1 ring-sky-500"
-                  : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300"
-              }`}
-            >
-              {e.displayName}
-              <span className="ml-1.5 text-[10px] font-mono text-slate-400">
-                {e.id}
-              </span>
-            </button>
-          ))}
-        </div>
+        {!hideActiveSwitcher && (
+          <div className="mb-4">
+            <SegmentedControl
+              ariaLabel="Active environment tier"
+              value={active.id}
+              onChange={setActiveEnvironment}
+              options={environments.map((e) => ({
+                value: e.id,
+                label: e.displayName,
+                shortLabel: tierShortLabel(e),
+              }))}
+            />
+          </div>
+        )}
 
         <div className="grid gap-3 sm:grid-cols-3 border-t border-slate-100 dark:border-slate-800 pt-4">
           <div>

@@ -220,3 +220,12 @@ export function scopeLabel(
   const env = environmentById(environments, s.environmentId);
   return env?.displayName ?? s.environmentId;
 }
+
+/** Short tier label for badges / Dev|Staging|Prod control (falls back to displayName). */
+export function tierShortLabel(env: Environment | undefined | null): string {
+  if (!env) return "—";
+  if (env.id === "dev") return "Dev";
+  if (env.id === "staging") return "Staging";
+  if (env.id === "prod") return "Prod";
+  return env.displayName || env.id;
+}

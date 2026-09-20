@@ -23,6 +23,7 @@ import {
   Button,
   Badge,
 } from "@/components/ui/Field";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 export function ResourceForm() {
   const {
@@ -70,9 +71,24 @@ export function ResourceForm() {
   const advancedFields = def.fields.filter((f) => f.advanced);
   const existingFields = def.fields.filter((f) => f.existingKey);
 
+  function setUseExisting(v: boolean) {
+    updateResource(resource!.id, { useExisting: v });
+    if (v) {
+      const seed: Record<string, unknown> = {
+        ...resource!.existingValues,
+      };
+      for (const f of existingFields) {
+        const cur = resource!.values[f.key];
+        if (typeof cur === "string" && cur && !seed[f.key]) {
+          seed[f.key] = cur;
+        }
+      }
+      updateResource(resource!.id, { existingValues: seed });
+    }
+  }
+
   function renderField(field: FieldDef) {
     if (resource!.useExisting && !field.existingKey) {
-      // Still show references? No — when existing, only identifying fields
       return null;
     }
 
@@ -98,8 +114,8 @@ export function ResourceForm() {
             placeholder={field.placeholder}
           />
           <Hint>
-            Identifying value for{" "}
-            <code>data.{resource!.type}.{resource!.tfName}</code>
+            Existing id/name used to look up this resource in Azure (not
+            managed by this project).
           </Hint>
         </div>
       );
@@ -265,7 +281,7 @@ export function ResourceForm() {
               }
               updateResourceValue(resource!.id, field.key, next);
             }}
-            className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-sky-500"
+            className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
             placeholder={"Environment=dev\nManagedBy=terraform"}
           />
           <Hint>One key=value per line</Hint>
@@ -291,7 +307,7 @@ export function ResourceForm() {
           />
           <Hint>
             {field.description ||
-              "Emitted as a sensitive variable — never hardcoded in HCL."}
+              "Emitted as a sensitive variable — never hardcoded in the export."}
           </Hint>
         </div>
       );
@@ -316,25 +332,50 @@ export function ResourceForm() {
     );
   }
 
+  const mode = resource.useExisting ? "existing" : "create";
+
   return (
     <Card className="p-5 flex flex-col h-full min-h-0 overflow-y-auto">
+      {/* Existing | Create at top */}
+      <div className="mb-4">
+        <Label>Resource mode</Label>
+        <SegmentedControl
+          ariaLabel="Existing or create resource"
+          value={mode}
+          onChange={(next) => setUseExisting(next === "existing")}
+          options={[
+            { value: "existing", label: "Existing" },
+            { value: "create", label: "Create" },
+          ]}
+          className="mt-1"
+        />
+        <Hint>
+          {resource.type === "azurerm_private_dns_zone"
+            ? "Private DNS defaults to Existing (shared hub zone). Switch to Create only if this project should own the zone."
+            : resource.useExisting
+              ? "Look up an existing Azure resource by id/name — this project will not create or destroy it."
+              : "Create and manage this resource in the exported Terraform."}
+        </Hint>
+      </div>
+
       <div className="flex items-start justify-between gap-3 mb-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xl">{def.icon}</span>
+            <span className="text-xl" aria-hidden>
+              {def.icon}
+            </span>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
               {def.label}
             </h2>
             {resource.useExisting ? (
-              <Badge tone="amber">existing / data</Badge>
+              <Badge tone="amber">existing</Badge>
             ) : (
-              <Badge tone="emerald">managed</Badge>
+              <Badge tone="emerald">create</Badge>
             )}
           </div>
-          <code className="text-xs font-mono text-slate-400">
-            {resource.useExisting ? "data." : ""}
-            {resource.type}.{resource.tfName}
-          </code>
+          <p className="text-xs text-slate-400">
+            Local name: <code className="font-mono">{resource.tfName}</code>
+          </p>
         </div>
         <Button
           variant="danger"
@@ -348,7 +389,7 @@ export function ResourceForm() {
       <div className="space-y-4 mb-5">
         <div>
           <Label htmlFor="tf-name" required>
-            Terraform name
+            Local name
           </Label>
           <TextInput
             id="tf-name"
@@ -367,49 +408,17 @@ export function ResourceForm() {
               r.tfName === resource.tfName
           ) && (
             <p className="mt-1 text-xs text-rose-600">
-              Duplicate Terraform name — another {resource.type} already uses
-              &quot;{resource.tfName}&quot;. Rename to avoid HCL collisions.
+              Duplicate local name — another {def.label} already uses
+              &quot;{resource.tfName}&quot;. Rename to avoid collisions.
             </p>
           )}
           <Hint>
-            Local name in HCL:{" "}
-            <code>
-              {resource.type}.{resource.tfName}
-            </code>
+            Short id used when wiring references
             {resource.type === "azurerm_container_app" &&
               " — add more from the catalogue (app, app_2, …)"}
+            .
           </Hint>
         </div>
-
-        <Checkbox
-          checked={resource.useExisting}
-          onChange={(v) => {
-            updateResource(resource.id, { useExisting: v });
-            if (v) {
-              // Seed existing values from current name/rg fields
-              const seed: Record<string, unknown> = {
-                ...resource.existingValues,
-              };
-              for (const f of existingFields) {
-                const cur = resource.values[f.key];
-                if (typeof cur === "string" && cur && !seed[f.key]) {
-                  seed[f.key] = cur;
-                }
-              }
-              updateResource(resource.id, { existingValues: seed });
-            }
-          }}
-          label={
-            resource.type === "azurerm_private_dns_zone"
-              ? "Use existing (recommended for shared hub DNS)"
-              : "Use existing resource"
-          }
-          description={
-            resource.type === "azurerm_private_dns_zone"
-              ? "Default for Private DNS: look up an existing hub zone (data source) instead of creating a duplicate. Switch off only if this project should create the zone."
-              : "Emit a data source instead of managing this resource. Fill identifying name / resource group below."
-          }
-        />
 
         <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
           <Label>Scope</Label>
@@ -479,8 +488,9 @@ export function ResourceForm() {
             <div className="mb-4">
               <button
                 type="button"
-                className="text-sm font-medium text-sky-600 hover:text-sky-500 mb-3"
+                className="text-sm font-medium text-sky-600 hover:text-sky-500 mb-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
                 onClick={() => setShowAdvanced((s) => !s)}
+                aria-expanded={showAdvanced}
               >
                 {showAdvanced ? "▾ Hide advanced" : "▸ Show advanced"} (
                 {advancedFields.length})
@@ -495,7 +505,6 @@ export function ResourceForm() {
         </>
       )}
 
-      {/* Dependencies */}
       <div className="mt-auto pt-4 border-t border-slate-200 dark:border-slate-700">
         <SectionTitle>Dependencies</SectionTitle>
         <div className="grid gap-3 sm:grid-cols-2 text-sm">
@@ -511,7 +520,7 @@ export function ResourceForm() {
                   <li key={d.id}>
                     <button
                       type="button"
-                      className="text-sky-600 hover:underline text-xs"
+                      className="text-sky-600 hover:underline text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
                       onClick={() => selectResource(d.id)}
                     >
                       {formatResourceLabel(d)}
@@ -533,7 +542,7 @@ export function ResourceForm() {
                   <li key={d.id}>
                     <button
                       type="button"
-                      className="text-sky-600 hover:underline text-xs"
+                      className="text-sky-600 hover:underline text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
                       onClick={() => selectResource(d.id)}
                     >
                       {formatResourceLabel(d)}
