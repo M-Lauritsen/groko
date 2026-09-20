@@ -14,15 +14,15 @@ import { defaultEnvironments } from "../schema/environments";
 import { getResourceType } from "../schema/resources";
 import {
   MODULE_DEFS,
-  partitionByModule,
   moduleOrder,
-  createModuleOfMap,
   resolveModularRef,
   outputName,
   envTags,
   type ModularRefContext,
   type CrossModuleInput,
 } from "./modules";
+import { resolveExportMap } from "./export-map";
+import type { ExportConfig } from "../schema/types";
 
 function escapeHclString(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -1622,12 +1622,16 @@ Pass secrets via \`-var-file=environments/<env>.tfvars\` or \`TF_VAR_*\` environ
 export function generateProject(
   config: ProjectConfig,
   resources: ResourceInstance[],
-  environments: Environment[] = defaultEnvironments()
+  environments: Environment[] = defaultEnvironments(),
+  exportConfig?: ExportConfig | null
 ): GenerateResult {
   const sensitiveVars: GenerateResult["sensitiveVars"] = [];
-  const partitioned = partitionByModule(resources);
+  const resolved = resolveExportMap(resources, exportConfig);
+  const partitioned = resolved.byModule;
   const orderedModules = moduleOrder(Array.from(partitioned.keys()));
-  const moduleOf = createModuleOfMap(resources);
+  const moduleOf = resolved.moduleOf;
+  // Orphans (null folder) are excluded from modules. Download ZIP must block or
+  // require explicit “leave unmapped” confirm — never silent drop (see export-map).
 
   const files: GeneratedFiles = {};
   const moduleInputs = new Map<string, CrossModuleInput[]>();
@@ -1716,9 +1720,10 @@ export function generateProject(
 export function previewHcl(
   config: ProjectConfig,
   resources: ResourceInstance[],
-  environments?: Environment[]
+  environments?: Environment[],
+  exportConfig?: ExportConfig | null
 ): string {
-  const { files } = generateProject(config, resources, environments);
+  const { files } = generateProject(config, resources, environments, exportConfig);
   const paths = Object.keys(files).sort((a, b) => {
     const rank = (p: string) => {
       if (!p.includes("/")) return 0;

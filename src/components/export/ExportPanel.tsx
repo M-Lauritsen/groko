@@ -4,27 +4,44 @@ import { useMemo, useState } from "react";
 import { useProject } from "@/lib/store/project-context";
 import { previewHcl, generateProject } from "@/lib/generate/hcl";
 import { downloadProjectZip } from "@/lib/generate/zip";
+import { canDownloadWithMap } from "@/lib/generate/export-map";
+import { shortResourceInfo } from "@/lib/generate/export-map";
 import { Button, Card, SectionTitle, Badge } from "@/components/ui/Field";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { TierBadge } from "@/components/project/TierBadge";
+import { FolderStructurePanel } from "./FolderStructurePanel";
 
-type Tab = "preview" | "files";
+type Tab = "preview" | "files" | "structure";
 
 export function ExportPanel() {
   const { state } = useProject();
-  const [tab, setTab] = useState<Tab>("preview");
+  const [tab, setTab] = useState<Tab>("structure");
+  const [mapMode, setMapMode] = useState(false);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
 
   const preview = useMemo(
-    () => previewHcl(state.config, state.resources, state.environments),
-    [state.config, state.resources, state.environments]
+    () =>
+      previewHcl(
+        state.config,
+        state.resources,
+        state.environments,
+        state.exportConfig
+      ),
+    [state.config, state.resources, state.environments, state.exportConfig]
   );
 
   const generated = useMemo(
-    () => generateProject(state.config, state.resources, state.environments),
-    [state.config, state.resources, state.environments]
+    () =>
+      generateProject(
+        state.config,
+        state.resources,
+        state.environments,
+        state.exportConfig
+      ),
+    [state.config, state.resources, state.environments, state.exportConfig]
   );
 
   const fileNames = useMemo(() => {
@@ -41,17 +58,46 @@ export function ExportPanel() {
     });
   }, [generated.files]);
 
-  const activeFile = selectedFile && generated.files[selectedFile]
-    ? selectedFile
-    : fileNames[0] ?? null;
+  const activeFile =
+    selectedFile && generated.files[selectedFile]
+      ? selectedFile
+      : (fileNames[0] ?? null);
 
-  async function onDownload() {
+  const downloadGate = canDownloadWithMap(
+    state.resources,
+    state.exportConfig,
+    { mapMode }
+  );
+
+  async function doDownload(leaveUnmappedConfirmed: boolean) {
+    const gate = canDownloadWithMap(state.resources, state.exportConfig, {
+      mapMode,
+      leaveUnmappedConfirmed,
+    });
+    if (!gate.ok) {
+      setLeaveConfirmOpen(true);
+      return;
+    }
     setBusy(true);
     try {
-      await downloadProjectZip(state.config, state.resources, state.environments);
+      await downloadProjectZip(
+        state.config,
+        state.resources,
+        state.environments,
+        state.exportConfig
+      );
+      setLeaveConfirmOpen(false);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function onDownload() {
+    if (downloadGate.orphans.length > 0) {
+      setLeaveConfirmOpen(true);
+      return;
+    }
+    await doDownload(false);
   }
 
   async function onCopy() {
@@ -81,21 +127,29 @@ export function ExportPanel() {
           <Badge tone="violet">{state.environments.length} envs</Badge>
           <Badge tone="violet">{moduleCount} module files</Badge>
           {caCount > 0 && (
-            <Badge tone="emerald">{caCount} container app{caCount === 1 ? "" : "s"}</Badge>
+            <Badge tone="emerald">
+              {caCount} container app{caCount === 1 ? "" : "s"}
+            </Badge>
           )}
           {generated.sensitiveVars.length > 0 && (
             <Badge tone="amber">
               {generated.sensitiveVars.length} sensitive vars
             </Badge>
           )}
+          {downloadGate.orphans.length > 0 && (
+            <Badge tone="amber">
+              {downloadGate.orphans.length} unassigned
+            </Badge>
+          )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <SegmentedControl
             ariaLabel="Export view"
             size="sm"
             value={tab}
             onChange={setTab}
             options={[
+              { value: "structure", label: "Folder structure" },
               { value: "preview", label: "Live HCL" },
               { value: "files", label: "Files" },
             ]}
@@ -103,16 +157,101 @@ export function ExportPanel() {
           <Button variant="secondary" size="sm" onClick={onCopy}>
             {copied ? "Copied!" : "Copy"}
           </Button>
-          <Button variant="primary" size="sm" onClick={onDownload} disabled={busy}>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={onDownload}
+            disabled={busy || (downloadGate.orphans.length > 0 && mapMode)}
+            title={
+              downloadGate.orphans.length > 0 && mapMode
+                ? downloadGate.reason
+                : undefined
+            }
+          >
             {busy ? "Zipping…" : "Download ZIP"}
           </Button>
+          {downloadGate.orphans.length > 0 && mapMode && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setLeaveConfirmOpen(true)}
+              disabled={busy}
+            >
+              Leave unmapped…
+            </Button>
+          )}
         </div>
       </div>
+
+      {leaveConfirmOpen && downloadGate.orphans.length > 0 && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="leave-unmapped-title"
+          className="mx-4 mt-3 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/50 p-4 shadow-sm"
+        >
+          <h3
+            id="leave-unmapped-title"
+            className="text-sm font-semibold text-amber-950 dark:text-amber-100"
+          >
+            Leave {downloadGate.orphans.length} resource
+            {downloadGate.orphans.length === 1 ? "" : "s"} unmapped?
+          </h3>
+          <p className="mt-1 text-xs text-amber-900 dark:text-amber-200">
+            They will be omitted from the ZIP. This is never silent — confirm
+            only if you intend to exclude them. Prefer assigning folders in Map
+            mode.
+          </p>
+          <ul className="mt-2 max-h-28 overflow-y-auto text-xs list-disc pl-5 text-amber-900 dark:text-amber-200 space-y-0.5">
+            {downloadGate.orphans.map((r) => {
+              const info = shortResourceInfo(r);
+              return (
+                <li key={r.id}>
+                  {info.typeLabel} · {info.label}
+                </li>
+              );
+            })}
+          </ul>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={busy}
+              onClick={() => doDownload(true)}
+            >
+              {busy ? "Zipping…" : "Download without them"}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setLeaveConfirmOpen(false);
+                setTab("structure");
+                setMapMode(true);
+              }}
+            >
+              Assign folders instead
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setLeaveConfirmOpen(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
 
       {tab === "preview" ? (
         <pre className="flex-1 overflow-auto p-4 text-[12px] leading-relaxed font-mono text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/50">
           {preview}
         </pre>
+      ) : tab === "structure" ? (
+        <FolderStructurePanel
+          mapMode={mapMode}
+          onMapModeChange={setMapMode}
+        />
       ) : (
         <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-12">
           <aside className="md:col-span-4 border-b md:border-b-0 md:border-r border-slate-200 dark:border-slate-700 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-950/40">

@@ -12,11 +12,20 @@ import React, {
 import type {
   Environment,
   EnvironmentKnobs,
+  ExportConfig,
   ProjectConfig,
   ProjectState,
   ResourceInstance,
   ResourceScope,
 } from "../schema/types";
+import { defaultExportConfig } from "../schema/types";
+import {
+  pruneExportConfig,
+  withDomainGroupModule,
+  withResourceModule,
+  withTypeGroupModule,
+  resetExportConfig,
+} from "../generate/export-map";
 import { getResourceType } from "../schema/resources";
 import {
   defaultEnvironments,
@@ -59,6 +68,7 @@ const initialState: ProjectState = {
   activeEnvironmentId: initialEnvironments[0]?.id ?? "dev",
   resources: [],
   selectedResourceId: null,
+  exportConfig: defaultExportConfig(),
 };
 
 interface ProjectContextValue {
@@ -90,6 +100,11 @@ interface ProjectContextValue {
     resources: ResourceInstance[],
     mode: "merge" | "replace"
   ) => void;
+  setExportConfig: (config: ExportConfig) => void;
+  setResourceModule: (resourceId: string, moduleId: string | null) => void;
+  setTypeGroupModule: (type: string, moduleId: string | null) => void;
+  setDomainGroupModule: (fromModuleId: string, toModuleId: string | null) => void;
+  resetFolderMap: () => void;
 }
 
 const ProjectContext = createContext<ProjectContextValue | null>(null);
@@ -536,6 +551,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           resources,
           selectedResourceId:
             s.selectedResourceId === id ? null : s.selectedResourceId,
+          exportConfig: pruneExportConfig(s.exportConfig, resources),
         };
       });
     },
@@ -561,11 +577,66 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           },
           resources: next,
           selectedResourceId: selectId,
+          exportConfig:
+            mode === "replace"
+              ? defaultExportConfig()
+              : pruneExportConfig(s.exportConfig, next),
         };
       });
     },
     [commit]
   );
+
+  const setExportConfig = useCallback(
+    (config: ExportConfig) => {
+      commit((s) => ({ ...s, exportConfig: config }));
+    },
+    [commit]
+  );
+
+  const setResourceModule = useCallback(
+    (resourceId: string, moduleId: string | null) => {
+      commit((s) => ({
+        ...s,
+        exportConfig: withResourceModule(s.exportConfig, resourceId, moduleId),
+      }));
+    },
+    [commit]
+  );
+
+  const setTypeGroupModule = useCallback(
+    (type: string, moduleId: string | null) => {
+      commit((s) => ({
+        ...s,
+        exportConfig: withTypeGroupModule(
+          s.exportConfig,
+          s.resources,
+          type,
+          moduleId
+        ),
+      }));
+    },
+    [commit]
+  );
+
+  const setDomainGroupModule = useCallback(
+    (fromModuleId: string, toModuleId: string | null) => {
+      commit((s) => ({
+        ...s,
+        exportConfig: withDomainGroupModule(
+          s.exportConfig,
+          s.resources,
+          fromModuleId,
+          toModuleId
+        ),
+      }));
+    },
+    [commit]
+  );
+
+  const resetFolderMap = useCallback(() => {
+    commit((s) => ({ ...s, exportConfig: resetExportConfig() }));
+  }, [commit]);
 
   const selectResource = useCallback((id: string | null) => {
     // Selection-only — not an undo step.
@@ -597,6 +668,11 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       selectResource,
       getUniqueTfName,
       importResources,
+      setExportConfig,
+      setResourceModule,
+      setTypeGroupModule,
+      setDomainGroupModule,
+      resetFolderMap,
     }),
     [
       state,
@@ -618,6 +694,11 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       selectResource,
       getUniqueTfName,
       importResources,
+      setExportConfig,
+      setResourceModule,
+      setTypeGroupModule,
+      setDomainGroupModule,
+      resetFolderMap,
     ]
   );
 

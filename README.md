@@ -55,6 +55,16 @@ modules/
 README.md
 ```
 
+### Folder-structure map (Export only)
+
+Lives on **Export** — not Resources, not a `.tf` tree in primary nav.
+
+- **Folder structure** panel shows the live ZIP tree (`config.tf`, `modules/…`, env tfvars) derived from the Environment graph + one `exportConfig` object.
+- Click a folder/file → see which **resources** land there (short domain info; no raw HCL).
+- Optional **Map mode**: assign resources or domain groups to module folders before download. Defaults reuse `MODULE_DEFS` / `generateProject` grouping; overrides are **domain→folder** only (stored in `exportConfig.moduleByResourceId`, included in undo snapshots).
+- **Orphans** (resources with no folder) are listed clearly. **Download ZIP is disabled in Map mode while orphans remain.** To proceed without them you must use **Leave unmapped…** and explicitly confirm — never a silent drop from the ZIP.
+- Live HCL / Files preview and Download ZIP both honour the map. HCL stays edge-only.
+
 ### Init + plan (remote state)
 
 ```bash
@@ -86,18 +96,18 @@ Edit `environments/backend.*.hcl` (`storage_account_name`, etc.) and fill `CHANG
 
 ## Undo & safer starters
 
-- **Undo / Redo** — header and resource-list controls, plus `Cmd/Ctrl+Z` and `Shift+Cmd/Ctrl+Z` (or `Ctrl+Y`). History keeps ~40 snapshots of resources + selection + **environments/scopes**; value typing is debounced (~300ms) so undo is not character-by-character. Snapshots cover add/remove, value edits, use-existing toggles, import merge/replace, starter apply, and environment knob edits.
+- **Undo / Redo** — header and resource-list controls, plus `Cmd/Ctrl+Z` and `Shift+Cmd/Ctrl+Z` (or `Ctrl+Y`). History keeps ~40 snapshots of resources + selection + **environments/scopes** + **exportConfig** (folder map overrides); value typing is debounced (~300ms) so undo is not character-by-character. Snapshots cover add/remove, value edits, use-existing toggles, import merge/replace, starter apply, and environment knob edits.
 - **Starter apply** — empty canvas applies immediately. If resources already exist, a confirm offers **Replace all**, **Merge with starter**, or **Cancel** (no silent wipe).
 
 ## Architecture
 
 ```
 src/lib/schema/     # ResourceTypeDef catalogue + starters
-src/lib/generate/   # HCL emitters, module grouping, ZIP
+src/lib/generate/   # HCL emitters, module grouping, export folder map, ZIP
 src/lib/import/     # Client-side HCL parse → ResourceInstance[]
 src/lib/store/      # React project state + undo history + starter apply
 src/components/     # Environment / catalogue / forms / dependency graph / export
-scripts/test-generate.ts
+scripts/test-generate.ts · test-export-map.ts · test-history.ts · test-graph-layout.ts
 ```
 
 ## Catalogue highlights
@@ -151,7 +161,7 @@ Keyboard-only smoke path after `npm run dev`:
 4. **List | Graph** — Tab to the Resources view toggle; switch to **Graph**. Nodes are shared + active-env resources (Existing/Create + Shared vs env styling). Arrow/Tab to a node; **Enter** selects — the same **ResourceForm** (mode, scope, fields, deps/used-by) opens in the side panel (one selection model). Switch back to **List**; selection stays. Cross-env-blocked refs are not drawn as valid edges. Undo still works.
 5. Add **Linux Function App** (short card) → form opens with **Existing | Create** at top; toggle both modes. Add **Private DNS Zone** → defaults **Existing**.
 6. Toggle Existing/Create; fill an existing id/name field — hints use plain language (no `data.azurerm_…`).
-7. **Export** — Tier badge still visible; open Live HCL / Files; Download ZIP. HCL remains edge-only (Export/Import).
+7. **Export** — Tier badge still visible; open **Folder structure** (tree + detail). Toggle **Map mode**; reassign a resource or domain group; confirm orphan list blocks **Download ZIP** until assigned or you confirm **Leave unmapped…**. Open Live HCL / Files; Download ZIP. HCL remains edge-only (Export/Import).
 
 Acceptance: keyboard can complete Environment → import review/confirm → Resources → List|Graph selection sync → add resource → toggle existing/create → export; Import / Graph are not a fourth main tab; no new catalogue types; Graph reuses ResourceForm (no second detail schema).
 
@@ -165,5 +175,5 @@ Acceptance: keyboard can complete Environment → import review/confirm → Reso
 - Container App secrets from Key Vault use `vault_uri + secrets/<name>` (versionless); create the KV secret out-of-band or add an `azurerm_key_vault_secret` resource yourself.
 - Private Endpoint is ACR-focused (`registry` subresource); other PE targets not catalogued yet.
 - System-assigned identity + AcrPull role assignment is not auto-wired (user-assigned path is).
-- Module boundaries are fixed groupings.
+- Module folder defaults are fixed groupings; Map mode can override domain→folder before download.
 - Terraform import is best-effort (not full HCL2); modules/for_each/complex expressions are skipped.

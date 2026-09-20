@@ -3,6 +3,7 @@
  */
 import assert from "node:assert/strict";
 import type { ProjectConfig, ProjectState, ResourceInstance } from "../src/lib/schema/types";
+import { defaultExportConfig } from "../src/lib/schema/types";
 import { defaultEnvironments, sharedScope } from "../src/lib/schema/environments";
 import {
   HISTORY_LIMIT,
@@ -41,6 +42,7 @@ function emptyState(): ProjectState {
     activeEnvironmentId: environments[0].id,
     resources: [],
     selectedResourceId: null,
+    exportConfig: defaultExportConfig(),
   };
 }
 

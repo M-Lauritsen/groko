@@ -111,6 +111,8 @@ export interface ProjectState {
   activeEnvironmentId: string;
   resources: ResourceInstance[];
   selectedResourceId: string | null;
+  /** Export folder map overrides (included in undo snapshots). */
+  exportConfig: ExportConfig;
 }
 
 export interface ReferenceValue {
@@ -159,3 +161,18 @@ export const AZURE_LOCATIONS: FieldOption[] = [
 
 export const TERRAFORM_VERSION = ">= 1.5.0, < 2.0.0";
 export const AZURERM_VERSION = "~> 4.0";
+
+/** One exporter config — domain→folder map for ZIP layout (not free-form HCL). */
+export interface ExportConfig {
+  /**
+   * Per-resource module folder override.
+   * - missing key → default from MODULE_DEFS / moduleIdForType
+   * - string → modules/<id>/
+   * - null → orphan (no folder); flagged in Map mode before download
+   */
+  moduleByResourceId: Record<string, string | null>;
+}
+
+export function defaultExportConfig(): ExportConfig {
+  return { moduleByResourceId: {} };
+}

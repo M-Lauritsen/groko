@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import type {
   Environment,
+  ExportConfig,
   ProjectConfig,
   ResourceInstance,
 } from "../schema/types";
@@ -27,9 +28,10 @@ terraform.rc
 export async function downloadProjectZip(
   config: ProjectConfig,
   resources: ResourceInstance[],
-  environments?: Environment[]
+  environments?: Environment[],
+  exportConfig?: ExportConfig | null
 ): Promise<void> {
-  const { files } = generateProject(config, resources, environments);
+  const { files } = generateProject(config, resources, environments, exportConfig);
   const zip = new JSZip();
   const folder = zip.folder(sanitizeFolderName(config.name)) ?? zip;
 
@@ -55,9 +57,10 @@ function sanitizeFolderName(name: string): string {
 export async function buildProjectZipBuffer(
   config: ProjectConfig,
   resources: ResourceInstance[],
-  environments?: Environment[]
+  environments?: Environment[],
+  exportConfig?: ExportConfig | null
 ): Promise<Buffer> {
-  const { files } = generateProject(config, resources, environments);
+  const { files } = generateProject(config, resources, environments, exportConfig);
   const zip = new JSZip();
   for (const [name, content] of Object.entries(files)) {
     zip.file(name, content);

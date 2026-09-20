@@ -5,6 +5,8 @@
 import { getStarter } from "../schema/starters";
 import { mergeImportedResources } from "../import/mapToProject";
 import type { ProjectState } from "../schema/types";
+import { defaultExportConfig } from "../schema/types";
+import { pruneExportConfig } from "../generate/export-map";
 
 export type StarterApplyMode = "replace" | "merge";
 
@@ -38,6 +40,7 @@ export function applyStarterToState(
       config,
       resources: built,
       selectedResourceId: built[0]?.id ?? null,
+      exportConfig: defaultExportConfig(),
     };
   }
 
@@ -49,5 +52,6 @@ export function applyStarterToState(
     selectedResourceId: resources.find((r) => r.id === state.selectedResourceId)
       ? state.selectedResourceId
       : (resources[0]?.id ?? null),
+    exportConfig: pruneExportConfig(state.exportConfig, resources),
   };
 }
