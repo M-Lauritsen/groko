@@ -27,7 +27,6 @@ import {
 	Badge,
 } from '@/components/ui/Field';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { InfoTag } from '@/components/ui/InfoTag';
 import { RESOURCE_ASSISTANCE } from '@/lib/help/assistance';
 
 export function ResourceForm() {
@@ -392,35 +391,40 @@ export function ResourceForm() {
 			</div>
 
 			{assistance && (
-				<div className="mb-4">
-					<InfoTag title={assistance.title}>
-						<div className="space-y-3">
-							<p>
-								<strong>{assistance.summary}</strong>
-							</p>
-							<div>
-								<p className="font-semibold">When to use</p>
-								<p>{assistance.whenToUse}</p>
-							</div>
-							<div>
-								<p className="font-semibold">Security</p>
-								<ul className="list-disc pl-4 space-y-1">
-									{assistance.security.map((item) => (
-										<li key={item}>{item}</li>
-									))}
-								</ul>
-							</div>
-							<div>
-								<p className="font-semibold">Tips</p>
-								<ul className="list-disc pl-4 space-y-1">
-									{assistance.tips.map((item) => (
-										<li key={item}>{item}</li>
-									))}
-								</ul>
-							</div>
+				<section
+					className="mb-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs leading-5 text-slate-600 dark:border-sky-800 dark:bg-sky-950/40 dark:text-slate-300"
+					aria-labelledby="resource-assistance-title">
+					<h3
+						id="resource-assistance-title"
+						className="mb-2 text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
+						{assistance.title}
+					</h3>
+					<div className="space-y-3">
+						<p>
+							<strong>{assistance.summary}</strong>
+						</p>
+						<div>
+							<p className="font-semibold text-slate-700 dark:text-slate-200">When to use</p>
+							<p>{assistance.whenToUse}</p>
 						</div>
-					</InfoTag>
-				</div>
+						<div>
+							<p className="font-semibold text-slate-700 dark:text-slate-200">Security</p>
+							<ul className="list-disc pl-4 space-y-1">
+								{assistance.security.map((item) => (
+									<li key={item}>{item}</li>
+								))}
+							</ul>
+						</div>
+						<div>
+							<p className="font-semibold text-slate-700 dark:text-slate-200">Tips</p>
+							<ul className="list-disc pl-4 space-y-1">
+								{assistance.tips.map((item) => (
+									<li key={item}>{item}</li>
+								))}
+							</ul>
+						</div>
+					</div>
+				</section>
 			)}
 
 			<div className="space-y-4 mb-5">
