@@ -356,3 +356,124 @@ export function canDownloadWithMap(
     reason: `${orphans.length} unassigned resource(s). Assign each to a module folder, or confirm leave unmapped.`,
   };
 }
+
+
+/**
+ * Domain-language export review (Uxis): adds / updates / Existing / orphans.
+ * No HCL — counts + short resource lists from Environment graph + export map.
+ *
+ * - Adds: Create (useExisting false), assigned to a module folder
+ * - Existing: lookups (useExisting true), assigned
+ * - Updates: folder-map overrides (domain→folder differs from default)
+ * - Orphans: leave-unmapped / no folder
+ */
+export interface ExportReviewItem {
+  id: string;
+  label: string;
+  typeLabel: string;
+  scopeLabel: string;
+  mode: "add" | "existing" | "orphan";
+  moduleId: string | null;
+  moduleLabel: string | null;
+  folderOverride: boolean;
+}
+
+export interface ExportReviewFolderCount {
+  moduleId: string;
+  label: string;
+  path: string;
+  count: number;
+}
+
+export interface ExportReviewSummary {
+  adds: ExportReviewItem[];
+  existing: ExportReviewItem[];
+  updates: ExportReviewItem[];
+  orphans: ExportReviewItem[];
+  folderCounts: ExportReviewFolderCount[];
+  counts: {
+    adds: number;
+    existing: number;
+    updates: number;
+    orphans: number;
+    total: number;
+  };
+}
+
+function moduleLabelFor(moduleId: string | null): string | null {
+  if (moduleId === null) return null;
+  if (moduleId === "other") return "Other";
+  return MODULE_DEFS.find((m) => m.id === moduleId)?.label ?? moduleId;
+}
+
+export function buildExportReviewSummary(
+  resources: ResourceInstance[],
+  exportConfig?: ExportConfig | null
+): ExportReviewSummary {
+  const { orphans: orphanResources } = resolveExportMap(resources, exportConfig);
+  const orphanIds = new Set(orphanResources.map((r) => r.id));
+
+  const adds: ExportReviewItem[] = [];
+  const existing: ExportReviewItem[] = [];
+  const updates: ExportReviewItem[] = [];
+  const orphans: ExportReviewItem[] = [];
+  const byFolder = new Map<string, number>();
+
+  for (const r of resources) {
+    const info = shortResourceInfo(r);
+    const mid = resolveModuleId(r, exportConfig);
+    const folderOverride = isOverride(r, exportConfig);
+    const item: ExportReviewItem = {
+      id: r.id,
+      label: info.label,
+      typeLabel: info.typeLabel,
+      scopeLabel: info.scopeLabel,
+      mode: orphanIds.has(r.id)
+        ? "orphan"
+        : r.useExisting
+          ? "existing"
+          : "add",
+      moduleId: mid,
+      moduleLabel: moduleLabelFor(mid),
+      folderOverride,
+    };
+
+    if (item.mode === "orphan") {
+      orphans.push(item);
+    } else if (item.mode === "existing") {
+      existing.push(item);
+      if (mid) byFolder.set(mid, (byFolder.get(mid) ?? 0) + 1);
+    } else {
+      adds.push(item);
+      if (mid) byFolder.set(mid, (byFolder.get(mid) ?? 0) + 1);
+    }
+
+    if (folderOverride && item.mode !== "orphan") {
+      updates.push(item);
+    }
+  }
+
+  const folderCounts: ExportReviewFolderCount[] = moduleOrder(
+    Array.from(byFolder.keys())
+  ).map((moduleId) => ({
+    moduleId,
+    label: moduleLabelFor(moduleId) ?? moduleId,
+    path: `modules/${moduleId}`,
+    count: byFolder.get(moduleId) ?? 0,
+  }));
+
+  return {
+    adds,
+    existing,
+    updates,
+    orphans,
+    folderCounts,
+    counts: {
+      adds: adds.length,
+      existing: existing.length,
+      updates: updates.length,
+      orphans: orphans.length,
+      total: resources.length,
+    },
+  };
+}

@@ -80,6 +80,15 @@ modules/
 README.md
 ```
 
+### Review changes (Export default)
+
+Default Export tab (ahead of Live HCL). Domain summary only — **no HCL dump**.
+
+- Chips + short lists from the Environment graph + export map: **Adds** (Create / `useExisting` false), **Updates** (folder-map overrides), **Existing** lookups (`useExisting` true), **Orphans** / leave-unmapped.
+- Optional **module folder destination** counts (which domain folders receive how many resources).
+- **Download ZIP** is primary only when the orphan gate is clear. While orphans remain, Download stays secondary and **Leave unmapped…** requires explicit confirm (same gate as Map mode — never a silent drop).
+- Prod friction for starter/import Replace|Merge stays on Environment (Develops #16) — separate from this review.
+
 ### Folder-structure map (Export only)
 
 Lives on **Export** — not Resources, not a `.tf` tree in primary nav.
@@ -87,8 +96,8 @@ Lives on **Export** — not Resources, not a `.tf` tree in primary nav.
 - **Folder structure** panel shows the live ZIP tree (`config.tf`, `modules/…`, env tfvars) derived from the Environment graph + one `exportConfig` object.
 - Click a folder/file → see which **resources** land there (short domain info; no raw HCL).
 - Optional **Map mode**: assign resources or domain groups to module folders before download. Defaults reuse `MODULE_DEFS` / `generateProject` grouping; overrides are **domain→folder** only (stored in `exportConfig.moduleByResourceId`, included in undo snapshots).
-- **Orphans** (resources with no folder) are listed clearly. **Download ZIP is disabled in Map mode while orphans remain.** To proceed without them you must use **Leave unmapped…** and explicitly confirm — never a silent drop from the ZIP.
-- Live HCL / Files preview and Download ZIP both honour the map. HCL stays edge-only.
+- **Orphans** (resources with no folder) are listed clearly. **Download ZIP is blocked while orphans remain** (Review + Map). To proceed without them you must use **Leave unmapped…** and explicitly confirm — never a silent drop from the ZIP.
+- Live HCL / Files preview and Download ZIP both honour the map. HCL stays edge-only (Review never shows HCL).
 
 ### Init + plan (remote state)
 
@@ -132,10 +141,10 @@ Edit `environments/backend.*.hcl` (`storage_account_name`, etc.) and fill `CHANG
 
 ```
 src/lib/schema/     # ResourceTypeDef catalogue + starters
-src/lib/generate/   # HCL emitters, module grouping, export folder map, ZIP
+src/lib/generate/   # HCL emitters, module grouping, export folder map, review summary, ZIP
 src/lib/import/     # Client-side HCL parse → ResourceInstance[]
 src/lib/store/      # React project state + undo history + starter apply
-src/components/     # Environment / catalogue / forms / dependency graph / export
+src/components/     # Environment / catalogue / forms / dependency graph / export (Review + map)
 scripts/test-invariants.ts · test-generate.ts · test-export-map.ts · test-history.ts · test-graph-layout.ts · test-prod-friction.ts · test-empty-resources.ts · test-hub-dns-ownership.ts
 ```
 
@@ -200,7 +209,7 @@ Keyboard-only smoke path after `npm run dev`:
 4. **List | Graph** — Tab to the Resources view toggle. With an empty canvas, List shows heading *No resources in this Environment yet.* with primary **Add from catalogue** (focuses catalogue search) and secondary **Import existing** (Environment step); Graph shows *Nothing to show for this tier.* with the same primary (opens catalogue drawer) and Import link. Tier badge remains visible. With resources: nodes/rows are shared + active-env (Existing/Create + Shared vs env styling). Arrow/Tab to a node; **Enter** selects — the same **ResourceForm** opens in the side panel. On Graph, header **+ Add** also opens the catalogue drawer (Esc closes). Add a type — stay on Graph; selection syncs. Switch back to **List**; selection stays. Cross-env-blocked refs are not drawn as valid edges. Undo still works.
 5. Add **Application Insights** (own card beside Function Apps) → **Existing | Create**; optionally link LAW. Add **Linux Function App** → optional **Application Insights** reference picker (not a settings dump). Add **Private DNS Zone** → defaults **Existing**.
 6. Toggle Existing/Create; fill an existing id/name field — hints use plain language (no `data.azurerm_…`).
-7. **Export** — Tier badge still visible; open **Folder structure** (tree + detail). Toggle **Map mode**; reassign a resource or domain group; confirm orphan list blocks **Download ZIP** until assigned or you confirm **Leave unmapped…**. Open Live HCL / Files; Download ZIP. HCL remains edge-only (Export/Import).
+7. **Export** — Tier badge still visible; default tab is **Review changes** (chips: adds / updates / Existing / orphans — no HCL). Confirm orphan list blocks **Download ZIP** (primary only when gate clear) until assigned or you confirm **Leave unmapped…**. Open **Folder structure**; toggle **Map mode**; reassign a resource or domain group. Open Live HCL / Files; Download ZIP. HCL remains edge-only (Export/Import). Prod starter/import Replace still hits Prod friction on Environment first.
 
 Acceptance: keyboard can complete Environment → import review/confirm → Resources → List|Graph selection sync → Graph **+ Add** catalogue drawer (stay on Graph) → add resource → toggle existing/create → export; on Prod, starter/import Replace|Merge require Prod friction (Esc cancels); Import / Graph are not a fourth main tab; no new catalogue types; Graph reuses ResourceForm (no second detail schema).
 

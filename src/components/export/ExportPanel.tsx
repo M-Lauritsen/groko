@@ -4,18 +4,22 @@ import { useMemo, useState } from "react";
 import { useProject } from "@/lib/store/project-context";
 import { previewHcl, generateProject } from "@/lib/generate/hcl";
 import { downloadProjectZip } from "@/lib/generate/zip";
-import { canDownloadWithMap } from "@/lib/generate/export-map";
-import { shortResourceInfo } from "@/lib/generate/export-map";
+import {
+  buildExportReviewSummary,
+  canDownloadWithMap,
+  shortResourceInfo,
+} from "@/lib/generate/export-map";
 import { Button, Card, SectionTitle, Badge } from "@/components/ui/Field";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { TierBadge } from "@/components/project/TierBadge";
 import { FolderStructurePanel } from "./FolderStructurePanel";
+import { ReviewChangesPanel } from "./ReviewChangesPanel";
 
-type Tab = "preview" | "files" | "structure";
+type Tab = "review" | "structure" | "preview" | "files";
 
 export function ExportPanel() {
   const { state } = useProject();
-  const [tab, setTab] = useState<Tab>("structure");
+  const [tab, setTab] = useState<Tab>("review");
   const [mapMode, setMapMode] = useState(false);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -44,6 +48,11 @@ export function ExportPanel() {
     [state.config, state.resources, state.environments, state.exportConfig]
   );
 
+  const review = useMemo(
+    () => buildExportReviewSummary(state.resources, state.exportConfig),
+    [state.resources, state.exportConfig]
+  );
+
   const fileNames = useMemo(() => {
     const paths = Object.keys(generated.files);
     const rank = (p: string) => {
@@ -69,6 +78,9 @@ export function ExportPanel() {
     { mapMode }
   );
 
+  const gateClear = downloadGate.ok;
+  const hasOrphans = downloadGate.orphans.length > 0;
+
   async function doDownload(leaveUnmappedConfirmed: boolean) {
     const gate = canDownloadWithMap(state.resources, state.exportConfig, {
       mapMode,
@@ -76,6 +88,7 @@ export function ExportPanel() {
     });
     if (!gate.ok) {
       setLeaveConfirmOpen(true);
+      setTab("review");
       return;
     }
     setBusy(true);
@@ -93,8 +106,9 @@ export function ExportPanel() {
   }
 
   async function onDownload() {
-    if (downloadGate.orphans.length > 0) {
+    if (hasOrphans) {
       setLeaveConfirmOpen(true);
+      setTab("review");
       return;
     }
     await doDownload(false);
@@ -117,6 +131,12 @@ export function ExportPanel() {
     (r) => r.type === "azurerm_container_app"
   ).length;
 
+  function openMapForOrphans() {
+    setTab("structure");
+    setMapMode(true);
+    setLeaveConfirmOpen(false);
+  }
+
   return (
     <Card className="flex flex-col h-full min-h-0 overflow-hidden">
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex-wrap">
@@ -126,6 +146,16 @@ export function ExportPanel() {
           <Badge tone="sky">{state.resources.length} resources</Badge>
           <Badge tone="violet">{state.environments.length} envs</Badge>
           <Badge tone="violet">{moduleCount} module files</Badge>
+          <Badge tone="emerald">{review.counts.adds} adds</Badge>
+          <Badge tone="sky">{review.counts.existing} Existing</Badge>
+          {review.counts.updates > 0 && (
+            <Badge tone="violet">{review.counts.updates} updates</Badge>
+          )}
+          {hasOrphans && (
+            <Badge tone="amber">
+              {downloadGate.orphans.length} unassigned
+            </Badge>
+          )}
           {caCount > 0 && (
             <Badge tone="emerald">
               {caCount} container app{caCount === 1 ? "" : "s"}
@@ -136,11 +166,6 @@ export function ExportPanel() {
               {generated.sensitiveVars.length} sensitive vars
             </Badge>
           )}
-          {downloadGate.orphans.length > 0 && (
-            <Badge tone="amber">
-              {downloadGate.orphans.length} unassigned
-            </Badge>
-          )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <SegmentedControl
@@ -149,41 +174,54 @@ export function ExportPanel() {
             value={tab}
             onChange={setTab}
             options={[
+              { value: "review", label: "Review changes" },
               { value: "structure", label: "Folder structure" },
               { value: "preview", label: "Live HCL" },
               { value: "files", label: "Files" },
             ]}
           />
-          <Button variant="secondary" size="sm" onClick={onCopy}>
-            {copied ? "Copied!" : "Copy"}
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={onDownload}
-            disabled={busy || (downloadGate.orphans.length > 0 && mapMode)}
-            title={
-              downloadGate.orphans.length > 0 && mapMode
-                ? downloadGate.reason
-                : undefined
-            }
-          >
-            {busy ? "Zipping…" : "Download ZIP"}
-          </Button>
-          {downloadGate.orphans.length > 0 && mapMode && (
+          {(tab === "preview" || tab === "files") && (
+            <Button variant="secondary" size="sm" onClick={onCopy}>
+              {copied ? "Copied!" : "Copy"}
+            </Button>
+          )}
+          {gateClear ? (
             <Button
-              variant="secondary"
+              variant="primary"
               size="sm"
-              onClick={() => setLeaveConfirmOpen(true)}
+              onClick={onDownload}
               disabled={busy}
             >
-              Leave unmapped…
+              {busy ? "Zipping…" : "Download ZIP"}
             </Button>
+          ) : (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onDownload}
+                disabled={busy}
+                title={downloadGate.reason}
+              >
+                {busy ? "Zipping…" : "Download ZIP"}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setLeaveConfirmOpen(true);
+                  setTab("review");
+                }}
+                disabled={busy}
+              >
+                Leave unmapped…
+              </Button>
+            </>
           )}
         </div>
       </div>
 
-      {leaveConfirmOpen && downloadGate.orphans.length > 0 && (
+      {leaveConfirmOpen && hasOrphans && (
         <div
           role="dialog"
           aria-modal="true"
@@ -224,11 +262,7 @@ export function ExportPanel() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => {
-                setLeaveConfirmOpen(false);
-                setTab("structure");
-                setMapMode(true);
-              }}
+              onClick={openMapForOrphans}
             >
               Assign folders instead
             </Button>
@@ -243,7 +277,9 @@ export function ExportPanel() {
         </div>
       )}
 
-      {tab === "preview" ? (
+      {tab === "review" ? (
+        <ReviewChangesPanel onOpenMap={openMapForOrphans} />
+      ) : tab === "preview" ? (
         <pre className="flex-1 overflow-auto p-4 text-[12px] leading-relaxed font-mono text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/50">
           {preview}
         </pre>

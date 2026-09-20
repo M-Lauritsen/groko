@@ -24,6 +24,7 @@ import {
   withDomainGroupModule,
   withResourceModule,
   resetExportConfig,
+  buildExportReviewSummary,
 } from "../src/lib/generate/export-map";
 import { generateProject } from "../src/lib/generate/hcl";
 import {
@@ -187,6 +188,52 @@ function main() {
       0
     );
     console.log("✓ exportConfig in undo snapshots");
+  }
+
+
+  // Review changes summary — domain counts, no HCL
+  {
+    const withExisting: ResourceInstance = {
+      ...sa,
+      useExisting: true,
+      existingValues: { name: "sa-existing" },
+    };
+    const list = [rg, vnet, withExisting];
+    const summary = buildExportReviewSummary(list, defaultExportConfig());
+    assert.equal(summary.counts.adds, 2);
+    assert.equal(summary.counts.existing, 1);
+    assert.equal(summary.counts.orphans, 0);
+    assert.equal(summary.counts.updates, 0);
+    assert.ok(summary.adds.every((i) => i.mode === "add"));
+    assert.ok(summary.existing.every((i) => i.mode === "existing"));
+    assert.ok(summary.folderCounts.length > 0);
+    // Domain labels only — no raw HCL blobs in items
+    for (const item of [...summary.adds, ...summary.existing]) {
+      assert.ok(item.typeLabel);
+      assert.ok(item.label);
+      assert.equal("hcl" in item, false);
+    }
+    console.log("✓ review summary adds / Existing / folder counts");
+  }
+
+  {
+    const ec = withResourceModule(defaultExportConfig(), "r2", null);
+    const withExisting: ResourceInstance = {
+      ...sa,
+      useExisting: true,
+    };
+    const list = [rg, vnet, withExisting];
+    const summary = buildExportReviewSummary(list, ec);
+    assert.equal(summary.counts.orphans, 1);
+    assert.equal(summary.orphans[0].id, "r2");
+    assert.equal(summary.counts.adds, 1); // rg only (vnet orphan)
+    assert.equal(summary.counts.existing, 1);
+    // Override that remaps (not null) counts as update
+    const ec2 = withResourceModule(defaultExportConfig(), "r3", "networking");
+    const sum2 = buildExportReviewSummary([rg, vnet, sa], ec2);
+    assert.equal(sum2.counts.updates, 1);
+    assert.equal(sum2.updates[0].id, "r3");
+    console.log("✓ review summary orphans + updates (folder overrides)");
   }
 
   console.log("\nAll export-map tests passed.");
