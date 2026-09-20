@@ -94,16 +94,16 @@ export function Checkbox({
   );
 }
 
-export function Button({
-  children,
-  variant = "primary",
-  size = "md",
-  className = "",
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "secondary" | "danger" | "ghost";
-  size?: "sm" | "md";
-}) {
+export const Button = React.forwardRef<
+  HTMLButtonElement,
+  React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    variant?: "primary" | "secondary" | "danger" | "ghost";
+    size?: "sm" | "md";
+  }
+>(function Button(
+  { children, variant = "primary", size = "md", className = "", ...props },
+  ref
+) {
   const variants = {
     primary:
       "bg-sky-600 hover:bg-sky-500 text-white shadow-sm disabled:bg-sky-400",
@@ -119,13 +119,15 @@ export function Button({
   };
   return (
     <button
+      ref={ref}
       {...props}
       className={`inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60 ${variants[variant]} ${sizes[size]} ${className}`}
     >
       {children}
     </button>
   );
-}
+});
+Button.displayName = "Button";
 
 export function Badge({
   children,

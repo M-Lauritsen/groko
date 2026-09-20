@@ -1,17 +1,38 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   RESOURCE_CATALOGUE,
   getCategories,
 } from "@/lib/schema/resources";
 import { useProject } from "@/lib/store/project-context";
-import { Card, SectionTitle, TextInput, Badge, Label } from "@/components/ui/Field";
+import {
+  Card,
+  SectionTitle,
+  TextInput,
+  Badge,
+  Label,
+  Button,
+} from "@/components/ui/Field";
 
-export function Catalogue() {
+export function Catalogue({
+  onAdded,
+  onClose,
+  autoFocusSearch = false,
+  variant = "panel",
+}: {
+  /** Called after a catalogue add (new resource id). addResource already selects it. */
+  onAdded?: (id: string) => void;
+  /** When set, shows a Close control in the header (drawer/popover use). */
+  onClose?: () => void;
+  autoFocusSearch?: boolean;
+  /** panel = List column; drawer = compact overlay body. */
+  variant?: "panel" | "drawer";
+} = {}) {
   const { addResource } = useProject();
   const [query, setQuery] = useState("");
   const categories = getCategories();
+  const searchId = useId();
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -25,20 +46,42 @@ export function Catalogue() {
     );
   }, [query]);
 
-  return (
-    <Card className="p-4 flex flex-col h-full min-h-0">
-      <SectionTitle>Catalogue</SectionTitle>
+  function handleAdd(type: string) {
+    const id = addResource(type);
+    if (id) onAdded?.(id);
+  }
+
+  const body = (
+    <>
+      <SectionTitle
+        action={
+          onClose ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              aria-label="Close catalogue"
+            >
+              Close
+            </Button>
+          ) : undefined
+        }
+      >
+        Catalogue
+      </SectionTitle>
       <div className="mb-3">
-        <Label htmlFor="catalogue-search">Search resources</Label>
+        <Label htmlFor={searchId}>Search resources</Label>
         <TextInput
-          id="catalogue-search"
+          id={searchId}
           placeholder="Search by name or category…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Search catalogue resources"
+          autoFocus={autoFocusSearch}
         />
       </div>
-      <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+      <div className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-0">
         {categories.map((cat) => {
           const items = filtered.filter((r) => r.category === cat);
           if (items.length === 0) return null;
@@ -52,7 +95,7 @@ export function Catalogue() {
                   <li key={r.type}>
                     <button
                       type="button"
-                      onClick={() => addResource(r.type)}
+                      onClick={() => handleAdd(r.type)}
                       className="w-full text-left rounded-lg px-2.5 py-2 hover:bg-sky-50 dark:hover:bg-sky-950/40 border border-transparent hover:border-sky-200 dark:hover:border-sky-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-1"
                       title={`Add ${r.label}`}
                       aria-label={`Add ${r.label}`}
@@ -89,6 +132,12 @@ export function Catalogue() {
           </p>
         )}
       </div>
-    </Card>
+    </>
   );
+
+  if (variant === "drawer") {
+    return <div className="flex flex-col h-full min-h-0">{body}</div>;
+  }
+
+  return <Card className="p-4 flex flex-col h-full min-h-0">{body}</Card>;
 }
