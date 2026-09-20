@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { generateProject, previewHcl } from "../src/lib/generate/hcl";
 import { getStarter } from "../src/lib/schema/starters";
+import { getResourceType } from "../src/lib/schema/resources";
 import type { ProjectConfig, ResourceInstance } from "../src/lib/schema/types";
 import {
   defaultEnvironments,
@@ -924,6 +925,152 @@ resource "azurerm_linux_function_app" "main" {
     );
   }
 
+  // 15) Private Key Vault: PE vault + DNS zone (use existing) + VNet link + public off
+  {
+    nextId = 1;
+    const priv = getStarter("private-key-vault");
+    assert.ok(priv);
+    const resources = priv!.build(config, makeId);
+    const dns = resources.find((r) => r.type === "azurerm_private_dns_zone");
+    assert.ok(dns);
+    assert.equal(dns!.useExisting, true);
+    assert.equal(dns!.scope.kind, "shared");
+    assert.equal(dns!.existingValues.name, "privatelink.vaultcore.azure.net");
+
+    const link = resources.find(
+      (r) => r.type === "azurerm_private_dns_zone_virtual_network_link"
+    );
+    assert.ok(link);
+    assert.equal(link!.scope.kind, "shared");
+
+    const pe = resources.find((r) => r.type === "azurerm_private_endpoint");
+    assert.ok(pe);
+    assert.equal(pe!.values.subresource_names, "vault");
+    assert.equal(pe!.values.private_connection_name, "psc-kv");
+    assert.equal(pe!.scope.kind, "shared");
+
+    const kv = resources.find((r) => r.type === "azurerm_key_vault");
+    assert.ok(kv);
+    assert.equal(kv!.values.public_network_access_enabled, false);
+
+    const gen = generateProject(
+      { ...config, starter: "private-key-vault" },
+      resources
+    );
+    assert.ok(gen.files["modules/private_networking/main.tf"]);
+    const pn = gen.files["modules/private_networking/main.tf"];
+    assert.match(pn, /data "azurerm_private_dns_zone"/);
+    assert.match(pn, /privatelink\.vaultcore\.azure\.net/);
+    assert.match(pn, /resource "azurerm_private_dns_zone_virtual_network_link"/);
+    assert.match(pn, /resource "azurerm_private_endpoint"/);
+    assert.match(pn, /subresource_names\s*=\s*\["vault"\]/);
+    assert.match(pn, /private_dns_zone_group\s*\{/);
+
+    const kvHcl = gen.files["modules/security/main.tf"];
+    assert.ok(kvHcl);
+    assert.match(kvHcl, /public_network_access_enabled\s*=\s*false/);
+
+    // Cross-env: shared PE may not reference env-scoped KV
+    const envKv = {
+      ...kv!,
+      id: "kv-dev",
+      scope: envScope("dev"),
+    };
+    const sharedPe = { ...pe!, id: "pe-shared", scope: sharedScope() };
+    assert.equal(canReference(sharedPe, envKv), false);
+    assert.equal(canReference(sharedPe, { ...kv!, scope: sharedScope() }), true);
+
+    console.log(
+      "✓ Private Key Vault starter: PE vault + hub DNS (use existing) + VNet link + public off"
+    );
+  }
+
+  // 16) Private SQL: PE sqlServer + DNS zone (use existing) + VNet link + public off
+  {
+    nextId = 1;
+    const priv = getStarter("private-sql");
+    assert.ok(priv);
+    const resources = priv!.build(config, makeId);
+    const dns = resources.find((r) => r.type === "azurerm_private_dns_zone");
+    assert.ok(dns);
+    assert.equal(dns!.useExisting, true);
+    assert.equal(dns!.scope.kind, "shared");
+    assert.equal(dns!.existingValues.name, "privatelink.database.windows.net");
+
+    const link = resources.find(
+      (r) => r.type === "azurerm_private_dns_zone_virtual_network_link"
+    );
+    assert.ok(link);
+    assert.equal(link!.scope.kind, "shared");
+
+    const pe = resources.find((r) => r.type === "azurerm_private_endpoint");
+    assert.ok(pe);
+    assert.equal(pe!.values.subresource_names, "sqlServer");
+    assert.equal(pe!.values.private_connection_name, "psc-sql");
+    assert.equal(pe!.scope.kind, "shared");
+
+    const sql = resources.find((r) => r.type === "azurerm_mssql_server");
+    assert.ok(sql);
+    assert.equal(sql!.values.public_network_access_enabled, false);
+
+    const gen = generateProject(
+      { ...config, starter: "private-sql" },
+      resources
+    );
+    assert.ok(gen.files["modules/private_networking/main.tf"]);
+    const pn = gen.files["modules/private_networking/main.tf"];
+    assert.match(pn, /data "azurerm_private_dns_zone"/);
+    assert.match(pn, /privatelink\.database\.windows\.net/);
+    assert.match(pn, /resource "azurerm_private_dns_zone_virtual_network_link"/);
+    assert.match(pn, /resource "azurerm_private_endpoint"/);
+    assert.match(pn, /subresource_names\s*=\s*\["sqlServer"\]/);
+    assert.match(pn, /private_dns_zone_group\s*\{/);
+
+    const sqlHcl = gen.files["modules/database/main.tf"];
+    assert.ok(sqlHcl);
+    assert.match(sqlHcl, /public_network_access_enabled\s*=\s*false/);
+
+    // Cross-env: shared PE may not reference env-scoped SQL
+    const envSql = {
+      ...sql!,
+      id: "sql-dev",
+      scope: envScope("dev"),
+    };
+    const sharedPe = { ...pe!, id: "pe-shared", scope: sharedScope() };
+    assert.equal(canReference(sharedPe, envSql), false);
+    assert.equal(
+      canReference(sharedPe, { ...sql!, scope: sharedScope() }),
+      true
+    );
+
+    console.log(
+      "✓ Private SQL starter: PE sqlServer + hub DNS (use existing) + VNet link + public off"
+    );
+  }
+
+  // 17) PE catalogue: one type targets ACR | KV | SQL via subresource
+  {
+    const peDef = getResourceType("azurerm_private_endpoint");
+    assert.ok(peDef);
+    const sub = peDef!.fields.find((f) => f.key === "subresource_names");
+    assert.ok(sub);
+    const vals = (sub!.options ?? []).map((o) => o.value);
+    assert.ok(vals.includes("registry"));
+    assert.ok(vals.includes("vault"));
+    assert.ok(vals.includes("sqlServer"));
+    const target = peDef!.fields.find(
+      (f) => f.key === "private_connection_resource_id"
+    );
+    assert.ok(target);
+    for (const t of [
+      "azurerm_container_registry",
+      "azurerm_key_vault",
+      "azurerm_mssql_server",
+    ]) {
+      assert.ok(target!.refTypes?.includes(t), `missing refType ${t}`);
+    }
+    console.log("✓ PE catalogue: ACR | KV | SQL subresources + target refs");
+  }
 
   console.log("\nAll generate smoke tests passed.");
 }

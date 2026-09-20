@@ -661,6 +661,15 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
         advanced: true,
       },
       {
+        key: "public_network_access_enabled",
+        label: "Public network access",
+        type: "boolean",
+        defaultValue: true,
+        advanced: true,
+        description:
+          "Set false for private Key Vault (private endpoint + privatelink.vaultcore.azure.net).",
+      },
+      {
         key: "tags",
         label: "Tags",
         type: "tags",
@@ -1014,6 +1023,15 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
         ],
         defaultValue: "1.2",
         advanced: true,
+      },
+      {
+        key: "public_network_access_enabled",
+        label: "Public network access",
+        type: "boolean",
+        defaultValue: true,
+        advanced: true,
+        description:
+          "Set false for private SQL (private endpoint + privatelink.database.windows.net).",
       },
       {
         key: "tags",
@@ -1606,9 +1624,9 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
     label: "Private DNS Zone",
     category: "Networking",
     description:
-      "Private DNS zone (e.g. privatelink.azurecr.io). Prefer Use existing for a shared hub zone.",
+      "Private DNS zone for PE (ACR / Key Vault / SQL). Prefer Use existing for a shared hub zone.",
     icon: "🧭",
-    defaultName: "acr",
+    defaultName: "hub",
     preferUseExisting: true,
     outputs: ["id", "name"],
     fields: [
@@ -1620,7 +1638,8 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
         defaultValue: "privatelink.azurecr.io",
         existingKey: true,
         placeholder: "privatelink.azurecr.io",
-        description: "For ACR private link use privatelink.azurecr.io",
+        description:
+          "ACR: privatelink.azurecr.io · Key Vault: privatelink.vaultcore.azure.net · SQL: privatelink.database.windows.net",
       },
       {
         key: "resource_group_name",
@@ -1648,7 +1667,7 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
     description:
       "Links a private DNS zone to a VNet so PE DNS resolves in-network. Typically Shared (hub).",
     icon: "🔗",
-    defaultName: "acr",
+    defaultName: "hub",
     outputs: ["id", "name"],
     fields: [
       {
@@ -1710,9 +1729,9 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
     label: "Private Endpoint",
     category: "Networking",
     description:
-      "Private endpoint (ACR registry subresource). DNS A records via private_dns_zone_group on the PE.",
+      "Private endpoint for ACR, Key Vault, or SQL. Pick subresource + target; DNS A records via private_dns_zone_group on the PE.",
     icon: "🔒",
-    defaultName: "acr",
+    defaultName: "main",
     outputs: ["id", "name"],
     fields: [
       {
@@ -1722,7 +1741,7 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
         required: true,
         defaultValue: "",
         existingKey: true,
-        placeholder: "pe-acr",
+        placeholder: "pe-acr / pe-kv / pe-sql",
       },
       {
         key: "resource_group_name",
@@ -1751,29 +1770,40 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
         description: "Private endpoint subnet (no CAE delegation)",
       },
       {
-        key: "private_connection_resource_id",
-        label: "Target resource (ACR)",
-        type: "reference",
-        required: true,
-        refTypes: ["azurerm_container_registry"],
-        refAttr: "id",
-        description: "Container Registry to expose privately",
-      },
-      {
         key: "subresource_names",
-        label: "Subresource",
+        label: "Target type (subresource)",
         type: "select",
         required: true,
-        options: [{ value: "registry", label: "registry (ACR)" }],
+        options: [
+          { value: "registry", label: "registry — Container Registry (ACR)" },
+          { value: "vault", label: "vault — Key Vault" },
+          { value: "sqlServer", label: "sqlServer — SQL Server" },
+        ],
         defaultValue: "registry",
-        description: "ACR private link subresource name",
+        description:
+          "Private Link subresource name (azurerm ~> 4.x). Match the target resource type below.",
+      },
+      {
+        key: "private_connection_resource_id",
+        label: "Target resource",
+        type: "reference",
+        required: true,
+        refTypes: [
+          "azurerm_container_registry",
+          "azurerm_key_vault",
+          "azurerm_mssql_server",
+        ],
+        refAttr: "id",
+        description:
+          "ACR, Key Vault, or SQL Server to expose privately (must match Target type)",
       },
       {
         key: "private_connection_name",
         label: "Connection name",
         type: "string",
-        defaultValue: "psc-acr",
+        defaultValue: "psc",
         advanced: true,
+        description: "Name of the private_service_connection block (e.g. psc-acr, psc-kv, psc-sql)",
       },
       {
         key: "is_manual_connection",
@@ -1790,7 +1820,7 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
         refTypes: ["azurerm_private_dns_zone"],
         refAttr: "id",
         description:
-          "When set, emits private_dns_zone_group on the PE (azurerm ~> 4.x) so A records are managed automatically",
+          "When set, emits private_dns_zone_group on the PE (azurerm ~> 4.x) so A records are managed automatically. Prefer an existing hub zone.",
       },
       {
         key: "tags",

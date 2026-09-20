@@ -162,9 +162,40 @@ export function ResourceForm() {
           <SelectInput
             id={field.key}
             value={String(resource!.values[field.key] ?? "")}
-            onChange={(e) =>
-              updateResourceValue(resource!.id, field.key, e.target.value)
-            }
+            onChange={(e) => {
+              const next = e.target.value;
+              updateResourceValue(resource!.id, field.key, next);
+              // PE: suggest connection name from target type when still default-ish
+              if (
+                resource!.type === "azurerm_private_endpoint" &&
+                field.key === "subresource_names"
+              ) {
+                const suggested =
+                  next === "vault"
+                    ? "psc-kv"
+                    : next === "sqlServer"
+                      ? "psc-sql"
+                      : next === "registry"
+                        ? "psc-acr"
+                        : "psc";
+                const cur = String(
+                  resource!.values.private_connection_name ?? ""
+                );
+                if (
+                  !cur ||
+                  cur === "psc" ||
+                  cur === "psc-acr" ||
+                  cur === "psc-kv" ||
+                  cur === "psc-sql"
+                ) {
+                  updateResourceValue(
+                    resource!.id,
+                    "private_connection_name",
+                    suggested
+                  );
+                }
+              }
+            }}
           >
             {(field.options ?? []).map((o) => (
               <option key={o.value} value={o.value}>

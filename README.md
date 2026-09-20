@@ -114,8 +114,8 @@ scripts/test-generate.ts · test-export-map.ts · test-history.ts · test-graph-
 
 Private networking (first-class catalogue resources, not raw HCL):
 
-- `azurerm_private_endpoint` — ACR `registry` subresource; emits `private_service_connection` + optional `private_dns_zone_group` (azurerm ~> 4.x pattern; no separate A record).
-- `azurerm_private_dns_zone` — defaults to **Use existing** (shared hub DNS); create is secondary.
+- `azurerm_private_endpoint` — one PE type for ACR (`registry`), Key Vault (`vault`), or SQL (`sqlServer`); emits `private_service_connection` + optional `private_dns_zone_group` (azurerm ~> 4.x; no separate A record).
+- `azurerm_private_dns_zone` — defaults to **Use existing** (shared hub DNS); create is secondary. Zones: `privatelink.azurecr.io`, `privatelink.vaultcore.azure.net`, `privatelink.database.windows.net`.
 - `azurerm_private_dns_zone_virtual_network_link` — typically **Shared**; list badge shows `VNet link · Shared hub` (or the owning environment).
 
 Scope: DNS zone + VNet link default **shared**; PE can be shared or env-scoped. Reference pickers still block cross-env refs.
@@ -124,17 +124,23 @@ Scope: DNS zone + VNet link default **shared**; PE can be shared or env-scoped. 
 
 Containers + Identity: `azurerm_container_registry`, `azurerm_user_assigned_identity`, `azurerm_role_assignment` (AcrPull / Key Vault Secrets User), `azurerm_log_analytics_workspace`, `azurerm_container_app_environment` (optional `infrastructure_subnet_id` + workload profile), `azurerm_container_app` (MI or admin registry auth, **env vars**, **app secrets** with plain or Key Vault refs, **HTTP scale rule**). Subnets support `Microsoft.App/environments` delegation.
 
-## Private ACR
+## Private endpoints (ACR / Key Vault / SQL)
 
-First-class catalogue resources (forms, refs, scopes — not raw HCL blobs):
+Same domain shape for all three — first-class catalogue resources (forms, refs, scopes — not per-type HCL blobs):
 
 | Resource | Typical scope | Notes |
 |----------|---------------|-------|
-| `azurerm_private_dns_zone` | Shared | Defaults to **Use existing** (hub DNS). Zone name `privatelink.azurecr.io`. |
+| `azurerm_private_dns_zone` | Shared | Defaults to **Use existing** (hub DNS). Zones: `privatelink.azurecr.io` (ACR), `privatelink.vaultcore.azure.net` (KV), `privatelink.database.windows.net` (SQL). |
 | `azurerm_private_dns_zone_virtual_network_link` | Shared | Badge shows **VNet link · Shared hub** (or owning env). |
-| `azurerm_private_endpoint` | Shared or env | ACR `registry` subresource; `private_dns_zone_group` on the PE (azurerm ~> 4.x). |
+| `azurerm_private_endpoint` | Shared or env | Subresource `registry` / `vault` / `sqlServer`; target ref ACR \| KV \| SQL; `private_dns_zone_group` on the PE (azurerm ~> 4.x). |
 
-Starter **Private ACR** scaffolds VNet + PE subnet + Premium ACR (`public_network_access_enabled = false`) + PE + hub DNS (use existing) + VNet link + MI/AcrPull. Export goes to `modules/private_networking/`.
+| Target | Public access knob | Starter |
+|--------|--------------------|---------|
+| ACR (Premium) | `public_network_access_enabled` on registry | **Private ACR** (+ MI/AcrPull) |
+| Key Vault | `public_network_access_enabled` on vault | **Private Key Vault** |
+| SQL Server | `public_network_access_enabled` on server | **Private SQL** |
+
+Export PE + DNS + VNet link → `modules/private_networking/`; KV → `modules/security/`; SQL → `modules/database/`; ACR → `modules/container_registry/`.
 
 
 ## Function App
@@ -173,7 +179,7 @@ Acceptance: keyboard can complete Environment → import review/confirm → Reso
 - Key Vault RBAC beyond tenant/RBAC flag is minimal.
 - Container App is single-container (no sidecars/Dapr).
 - Container App secrets from Key Vault use `vault_uri + secrets/<name>` (versionless); create the KV secret out-of-band or add an `azurerm_key_vault_secret` resource yourself.
-- Private Endpoint is ACR-focused (`registry` subresource); other PE targets not catalogued yet.
+- Private Endpoint covers ACR / Key Vault / SQL only (`registry` / `vault` / `sqlServer`); other PE targets not catalogued yet.
 - System-assigned identity + AcrPull role assignment is not auto-wired (user-assigned path is).
 - Module folder defaults are fixed groupings; Map mode can override domain→folder before download.
 - Terraform import is best-effort (not full HCL2); modules/for_each/complex expressions are skipped.
