@@ -133,6 +133,7 @@ function ShellInner() {
               <ResourceList
                 viewMode={resourcesView}
                 onViewModeChange={setResourcesView}
+                onGoToEnvironment={() => setTab("environment")}
               />
             </div>
             <div className="lg:col-span-5 min-h-0">
@@ -150,6 +151,7 @@ function ShellInner() {
               <DependencyGraph
                 viewMode={resourcesView}
                 onViewModeChange={setResourcesView}
+                onGoToEnvironment={() => setTab("environment")}
               />
             </div>
             <div className="lg:col-span-5 min-h-0">

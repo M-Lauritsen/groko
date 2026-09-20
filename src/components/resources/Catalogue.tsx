@@ -14,6 +14,7 @@ import {
   Label,
   Button,
 } from "@/components/ui/Field";
+import { CATALOGUE_PANEL_SEARCH_ID } from "@/lib/store/empty-resources";
 
 export function Catalogue({
   onAdded,
@@ -71,9 +72,9 @@ export function Catalogue({
         Catalogue
       </SectionTitle>
       <div className="mb-3">
-        <Label htmlFor={searchId}>Search resources</Label>
+        <Label htmlFor={variant === "panel" ? CATALOGUE_PANEL_SEARCH_ID : searchId}>Search resources</Label>
         <TextInput
-          id={searchId}
+          id={variant === "panel" ? CATALOGUE_PANEL_SEARCH_ID : searchId}
           placeholder="Search by name or category…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}

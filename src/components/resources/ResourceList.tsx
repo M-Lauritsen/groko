@@ -18,13 +18,20 @@ import {
   ResourcesViewToggle,
   type ResourcesViewMode,
 } from "./DependencyGraph";
+import {
+  ResourcesEmptyState,
+  focusCataloguePanelSearch,
+} from "./ResourcesEmptyState";
 
 export function ResourceList({
   viewMode = "list",
   onViewModeChange,
+  onGoToEnvironment,
 }: {
   viewMode?: ResourcesViewMode;
   onViewModeChange?: (v: ResourcesViewMode) => void;
+  /** Navigate to Environment step (Import existing / starters). */
+  onGoToEnvironment?: () => void;
 } = {}) {
   const { state, selectResource, removeResource, setActiveEnvironment } =
     useProject();
@@ -86,14 +93,13 @@ export function ResourceList({
       </p>
 
       {visible.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-center px-4">
-          <div>
-            <p className="text-sm text-slate-500 mb-1">No resources in this view</p>
-            <p className="text-xs text-slate-400">
-              Pick a starter or add from the catalogue →
-            </p>
-          </div>
-        </div>
+        <ResourcesEmptyState
+          variant="list"
+          envLabel={activeEnv?.displayName ?? "Environment"}
+          hiddenInOtherEnvs={resources.length - visible.length}
+          onAddFromCatalogue={focusCataloguePanelSearch}
+          onImportExisting={() => onGoToEnvironment?.()}
+        />
       ) : (
         <ul className="flex-1 overflow-y-auto space-y-1 pr-1">
           {visible.map((r) => {

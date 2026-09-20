@@ -15,6 +15,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { UndoRedoControls } from "@/components/history/UndoRedoControls";
 import { TierBadge } from "@/components/project/TierBadge";
 import { Catalogue } from "./Catalogue";
+import { ResourcesEmptyState } from "./ResourcesEmptyState";
 
 export type ResourcesViewMode = "list" | "graph";
 
@@ -43,9 +44,12 @@ export function ResourcesViewToggle({
 export function DependencyGraph({
   viewMode,
   onViewModeChange,
+  onGoToEnvironment,
 }: {
   viewMode: ResourcesViewMode;
   onViewModeChange: (v: ResourcesViewMode) => void;
+  /** Navigate to Environment step (Import existing / starters). */
+  onGoToEnvironment?: () => void;
 }) {
   const { state, selectResource, setActiveEnvironment } = useProject();
   const { resources, selectedResourceId, environments, activeEnvironmentId } =
@@ -200,23 +204,13 @@ export function DependencyGraph({
       </p>
 
       {visible.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-center px-4">
-          <div>
-            <p className="text-sm text-slate-500 mb-1">No resources in this view</p>
-            <p className="text-xs text-slate-400 mb-3">
-              Add from the catalogue, or pick a starter on Environment.
-            </p>
-            <Button
-              type="button"
-              variant="primary"
-              size="sm"
-              onClick={openCatalogue}
-              aria-label="Add from catalogue"
-            >
-              + Add from catalogue
-            </Button>
-          </div>
-        </div>
+        <ResourcesEmptyState
+          variant="graph"
+          envLabel={activeEnv?.displayName ?? "Environment"}
+          hiddenInOtherEnvs={resources.length - visible.length}
+          onAddFromCatalogue={openCatalogue}
+          onImportExisting={() => onGoToEnvironment?.()}
+        />
       ) : (
         <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-950/40">
           <svg
