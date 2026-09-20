@@ -5,10 +5,12 @@ import {
   type ReferenceValue,
   type ContainerEnvVar,
   type ContainerAppSecret,
+  type Environment,
   isReferenceValue,
   TERRAFORM_VERSION,
   AZURERM_VERSION,
 } from "../schema/types";
+import { defaultEnvironments } from "../schema/environments";
 import { getResourceType } from "../schema/resources";
 import {
   MODULE_DEFS,
@@ -1106,68 +1108,36 @@ function formatTagsHcl(tags: Record<string, string>): string {
 
 function generateEnvTfvars(
   config: ProjectConfig,
-  env: string,
+  env: Environment,
   sensitiveVars: GenerateResult["sensitiveVars"]
 ): string {
-  const tags = envTags(config, env);
-  const prefix =
-    env === "dev"
-      ? `${config.namingPrefix}-dev`
-      : env === "staging"
-        ? `${config.namingPrefix}-stg`
-        : `${config.namingPrefix}-prd`;
-
-  const knobs =
-    env === "dev"
-      ? {
-          acr_sku: "Basic",
-          ca_cpu: "0.25",
-          ca_memory: "0.5Gi",
-          ca_min_replicas: "0",
-          ca_max_replicas: "2",
-          ca_ingress_external: "true",
-        }
-      : env === "staging"
-        ? {
-            acr_sku: "Standard",
-            ca_cpu: "0.5",
-            ca_memory: "1Gi",
-            ca_min_replicas: "1",
-            ca_max_replicas: "5",
-            ca_ingress_external: "true",
-          }
-        : {
-            acr_sku: "Premium",
-            ca_cpu: "1.0",
-            ca_memory: "2Gi",
-            ca_min_replicas: "2",
-            ca_max_replicas: "10",
-            ca_ingress_external: "false",
-          };
+  const k = env.knobs;
+  const tags = envTags(config, env.id, k.tags);
+  const prefix = `${config.namingPrefix}${k.namingSuffix}`;
 
   const lines: string[] = [
-    `# Environment: ${env}`,
-    `# Usage: terraform plan -var-file=environments/${env}.tfvars`,
+    `# Environment: ${env.displayName} (${env.id})`,
+    `# Usage: terraform plan -var-file=environments/${env.id}.tfvars`,
     `# Fill sensitive values before apply. Do not commit real secrets.`,
     ``,
     `project_name  = ${formatString(config.name)}`,
     `location      = ${formatString(config.location)}`,
     `naming_prefix = ${formatString(prefix)}`,
-    `environment   = ${formatString(env)}`,
+    `environment   = ${formatString(env.id)}`,
     `tags = ${formatTagsHcl(tags)}`,
     ``,
-    `# Per-environment sizing`,
-    `acr_sku             = ${formatString(knobs.acr_sku)}`,
-    `ca_cpu              = ${knobs.ca_cpu}`,
-    `ca_memory           = ${formatString(knobs.ca_memory)}`,
-    `ca_min_replicas     = ${knobs.ca_min_replicas}`,
-    `ca_max_replicas     = ${knobs.ca_max_replicas}`,
-    `ca_ingress_external = ${knobs.ca_ingress_external}`,
+    `# Per-environment sizing (from Environment knobs)`,
+    `acr_sku             = ${formatString(k.acrSku)}`,
+    `ca_cpu              = ${k.caCpu}`,
+    `ca_memory           = ${formatString(k.caMemory)}`,
+    `ca_min_replicas     = ${k.caMinReplicas}`,
+    `ca_max_replicas     = ${k.caMaxReplicas}`,
+    `ca_ingress_external = ${k.caIngressExternal ? "true" : "false"}`,
   ];
   for (const sv of sensitiveVars) {
     lines.push(``);
     lines.push(`# ${sv.description}`);
-    lines.push(`${sv.name} = "CHANGE_ME_${env.toUpperCase()}"`);
+    lines.push(`${sv.name} = "CHANGE_ME_${env.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}"`);
   }
   return lines.join("\n") + "\n";
 }
@@ -1468,7 +1438,8 @@ Pass secrets via \`-var-file=environments/<env>.tfvars\` or \`TF_VAR_*\` environ
 
 export function generateProject(
   config: ProjectConfig,
-  resources: ResourceInstance[]
+  resources: ResourceInstance[],
+  environments: Environment[] = defaultEnvironments()
 ): GenerateResult {
   const sensitiveVars: GenerateResult["sensitiveVars"] = [];
   const partitioned = partitionByModule(resources);
@@ -1535,13 +1506,18 @@ export function generateProject(
   );
   files["outputs.tf"] = generateRootOutputs(orderedModules, partitioned);
 
-  for (const env of ["dev", "staging", "prod"] as const) {
-    files[`environments/${env}.tfvars`] = generateEnvTfvars(
+  const envs =
+    environments.length > 0 ? environments : defaultEnvironments();
+  for (const env of envs) {
+    files[`environments/${env.id}.tfvars`] = generateEnvTfvars(
       config,
       env,
       uniqueSensitive
     );
-    files[`environments/backend.${env}.hcl`] = generateBackendHcl(config, env);
+    files[`environments/backend.${env.id}.hcl`] = generateBackendHcl(
+      config,
+      env.id
+    );
   }
 
   files["README.md"] = generateProjectReadme(
@@ -1556,9 +1532,10 @@ export function generateProject(
 
 export function previewHcl(
   config: ProjectConfig,
-  resources: ResourceInstance[]
+  resources: ResourceInstance[],
+  environments?: Environment[]
 ): string {
-  const { files } = generateProject(config, resources);
+  const { files } = generateProject(config, resources, environments);
   const paths = Object.keys(files).sort((a, b) => {
     const rank = (p: string) => {
       if (!p.includes("/")) return 0;

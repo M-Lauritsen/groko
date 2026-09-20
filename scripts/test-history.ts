@@ -3,6 +3,7 @@
  */
 import assert from "node:assert/strict";
 import type { ProjectConfig, ProjectState, ResourceInstance } from "../src/lib/schema/types";
+import { defaultEnvironments, sharedScope } from "../src/lib/schema/environments";
 import {
   HISTORY_LIMIT,
   canRedo,
@@ -33,8 +34,11 @@ const baseConfig: ProjectConfig = {
 };
 
 function emptyState(): ProjectState {
+  const environments = defaultEnvironments();
   return {
     config: { ...baseConfig },
+    environments,
+    activeEnvironmentId: environments[0].id,
     resources: [],
     selectedResourceId: null,
   };
@@ -48,6 +52,7 @@ function fakeResource(id: string, tfName = "main"): ResourceInstance {
     useExisting: false,
     values: { name: `rg-${tfName}`, location: "westeurope" },
     existingValues: {},
+    scope: sharedScope(),
   };
 }
 
@@ -237,6 +242,44 @@ function main() {
     const next = applyStarterToState(s, "no-such-starter", "replace", makeId);
     assert.equal(next, s);
     console.log("✓ Unknown starter id leaves state unchanged");
+  }
+
+  // --- Undo snapshots include environments + scopes ---
+  {
+    let h = createHistory(emptyState());
+    const withScoped: ProjectState = {
+      ...emptyState(),
+      resources: [
+        {
+          ...fakeResource("a"),
+          scope: { kind: "environment", environmentId: "dev" },
+        },
+      ],
+      selectedResourceId: "a",
+      environments: defaultEnvironments().map((e) =>
+        e.id === "dev"
+          ? { ...e, knobs: { ...e.knobs, acrSku: "Premium" } }
+          : e
+      ),
+    };
+    h = pushHistory(h, withScoped);
+    assert.equal(h.present.resources[0].scope.kind, "environment");
+    assert.equal(
+      h.present.environments.find((e) => e.id === "dev")!.knobs.acrSku,
+      "Premium"
+    );
+    h = undo(h);
+    assert.equal(h.present.resources.length, 0);
+    assert.equal(
+      h.present.environments.find((e) => e.id === "dev")!.knobs.acrSku,
+      "Basic"
+    );
+    // Starter apply preserves environments
+    nextId = 1;
+    const applied = applyStarterToState(withScoped, "blank", "replace", makeId);
+    assert.equal(applied.environments.length, 3);
+    assert.equal(applied.activeEnvironmentId, "dev");
+    console.log("✓ Undo snapshots include environments + scopes");
   }
 
   console.log("\nAll history / starter-confirm smoke tests passed.");

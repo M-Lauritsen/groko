@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { ProjectProvider } from "@/lib/store/project-context";
+import { ProjectProvider, useProject } from "@/lib/store/project-context";
 import { ProjectSetup } from "@/components/project/ProjectSetup";
+import { EnvironmentsPanel } from "@/components/project/EnvironmentsPanel";
 import { Catalogue } from "@/components/resources/Catalogue";
 import { ResourceList } from "@/components/resources/ResourceList";
 import { ResourceForm } from "@/components/resources/ResourceForm";
@@ -11,7 +12,20 @@ import { Button, Badge } from "@/components/ui/Field";
 import { ImportTerraform } from "@/components/project/ImportTerraform";
 import { UndoRedoControls, UndoRedoKeyboard } from "@/components/history/UndoRedoControls";
 
-type MainTab = "builder" | "export" | "setup";
+type MainTab = "setup" | "environments" | "builder" | "export";
+
+function ActiveEnvBadge() {
+  const { state } = useProject();
+  const env =
+    state.environments.find((e) => e.id === state.activeEnvironmentId) ??
+    state.environments[0];
+  if (!env) return null;
+  return (
+    <Badge tone="violet">
+      env: {env.displayName}
+    </Badge>
+  );
+}
 
 function ShellInner() {
   const [tab, setTab] = useState<MainTab>("setup");
@@ -30,25 +44,27 @@ function ShellInner() {
                 Azure TF Builder
               </h1>
               <p className="text-[11px] text-slate-500 truncate">
-                Click · reference · export azurerm Terraform
+                Environment → Resources → Refs · export azurerm Terraform
               </p>
             </div>
             <Badge tone="sky">v1 · Azure</Badge>
+            <ActiveEnvBadge />
           </div>
 
-          <nav className="flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 p-1 bg-slate-50 dark:bg-slate-950">
+          <nav className="flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 p-1 bg-slate-50 dark:bg-slate-950 overflow-x-auto">
             {(
               [
                 { id: "setup", label: "1. Setup" },
-                { id: "builder", label: "2. Resources" },
-                { id: "export", label: "3. Export" },
+                { id: "environments", label: "2. Environments" },
+                { id: "builder", label: "3. Resources" },
+                { id: "export", label: "4. Export" },
               ] as const
             ).map((t) => (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => setTab(t.id)}
-                className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
                   tab === t.id
                     ? "bg-white dark:bg-slate-800 text-sky-700 dark:text-sky-300 shadow-sm"
                     : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
@@ -78,6 +94,17 @@ function ShellInner() {
         {tab === "setup" && (
           <div className="max-w-3xl mx-auto">
             <ProjectSetup />
+            <div className="mt-6 flex justify-end">
+              <Button variant="primary" onClick={() => setTab("environments")}>
+                Continue to environments →
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {tab === "environments" && (
+          <div className="max-w-3xl mx-auto">
+            <EnvironmentsPanel />
             <div className="mt-6 flex justify-end">
               <Button variant="primary" onClick={() => setTab("builder")}>
                 Continue to resources →

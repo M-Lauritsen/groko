@@ -10,11 +10,18 @@ import React, {
   useState,
 } from "react";
 import type {
+  Environment,
+  EnvironmentKnobs,
   ProjectConfig,
   ProjectState,
   ResourceInstance,
+  ResourceScope,
 } from "../schema/types";
 import { getResourceType } from "../schema/resources";
+import {
+  defaultEnvironments,
+  defaultScopeForNewResource,
+} from "../schema/environments";
 import { mergeImportedResources } from "../import/mapToProject";
 import {
   canRedo as historyCanRedo,
@@ -44,8 +51,12 @@ const defaultConfig: ProjectConfig = {
   starter: "blank",
 };
 
+const initialEnvironments = defaultEnvironments();
+
 const initialState: ProjectState = {
   config: defaultConfig,
+  environments: initialEnvironments,
+  activeEnvironmentId: initialEnvironments[0]?.id ?? "dev",
   resources: [],
   selectedResourceId: null,
 };
@@ -57,11 +68,21 @@ interface ProjectContextValue {
   undo: () => void;
   redo: () => void;
   setConfig: (partial: Partial<ProjectConfig>) => void;
+  setActiveEnvironment: (id: string) => void;
+  updateEnvironment: (
+    id: string,
+    patch: Partial<Omit<Environment, "id" | "knobs">> & {
+      knobs?: Partial<EnvironmentKnobs>;
+    }
+  ) => void;
+  addEnvironment: (env: Environment) => void;
+  removeEnvironment: (id: string) => void;
   applyStarter: (starterId: string, mode?: StarterApplyMode) => void;
   addResource: (type: string) => string;
   updateResource: (id: string, patch: Partial<ResourceInstance>) => void;
   updateResourceValue: (id: string, key: string, value: unknown) => void;
   updateExistingValue: (id: string, key: string, value: unknown) => void;
+  setResourceScope: (id: string, scope: ResourceScope) => void;
   removeResource: (id: string) => void;
   selectResource: (id: string | null) => void;
   getUniqueTfName: (type: string, preferred?: string) => string;
@@ -167,6 +188,78 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       },
     }));
   }, []);
+
+  const setActiveEnvironment = useCallback((id: string) => {
+    // View switch — not an undo step.
+    setHistory((h) => ({
+      ...h,
+      present: { ...h.present, activeEnvironmentId: id },
+    }));
+  }, []);
+
+  const updateEnvironment = useCallback(
+    (
+      id: string,
+      patch: Partial<Omit<Environment, "id" | "knobs">> & {
+        knobs?: Partial<EnvironmentKnobs>;
+      }
+    ) => {
+      commit((s) => ({
+        ...s,
+        environments: s.environments.map((e) =>
+          e.id === id
+            ? {
+                ...e,
+                ...("displayName" in patch
+                  ? { displayName: patch.displayName! }
+                  : {}),
+                knobs: patch.knobs ? { ...e.knobs, ...patch.knobs } : e.knobs,
+              }
+            : e
+        ),
+      }));
+    },
+    [commit]
+  );
+
+  const addEnvironment = useCallback(
+    (env: Environment) => {
+      commit((s) => {
+        if (s.environments.some((e) => e.id === env.id)) return s;
+        return {
+          ...s,
+          environments: [...s.environments, env],
+          activeEnvironmentId: env.id,
+        };
+      });
+    },
+    [commit]
+  );
+
+  const removeEnvironment = useCallback(
+    (id: string) => {
+      commit((s) => {
+        if (s.environments.length <= 1) return s;
+        const environments = s.environments.filter((e) => e.id !== id);
+        const activeEnvironmentId =
+          s.activeEnvironmentId === id
+            ? environments[0].id
+            : s.activeEnvironmentId;
+        // Re-scope resources that pointed at the removed env → shared
+        const resources = s.resources.map((r) => {
+          if (
+            r.scope?.kind === "environment" &&
+            r.scope.environmentId === id
+          ) {
+            return { ...r, scope: { kind: "shared" as const } };
+          }
+          return r;
+        });
+        return { ...s, environments, activeEnvironmentId, resources };
+      });
+    },
+    [commit]
+  );
 
   const applyStarter = useCallback(
     (starterId: string, mode: StarterApplyMode = "replace") => {
@@ -334,6 +427,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           useExisting: false,
           values,
           existingValues: {},
+          scope: defaultScopeForNewResource(type, s.activeEnvironmentId),
         };
 
         return {
@@ -389,6 +483,18 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       }));
     },
     [commitValueEdit]
+  );
+
+  const setResourceScope = useCallback(
+    (id: string, scope: ResourceScope) => {
+      commit((s) => ({
+        ...s,
+        resources: s.resources.map((r) =>
+          r.id === id ? { ...r, scope } : r
+        ),
+      }));
+    },
+    [commit]
   );
 
   const removeResource = useCallback(
@@ -455,11 +561,16 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       undo,
       redo,
       setConfig,
+      setActiveEnvironment,
+      updateEnvironment,
+      addEnvironment,
+      removeEnvironment,
       applyStarter,
       addResource,
       updateResource,
       updateResourceValue,
       updateExistingValue,
+      setResourceScope,
       removeResource,
       selectResource,
       getUniqueTfName,
@@ -471,11 +582,16 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       undo,
       redo,
       setConfig,
+      setActiveEnvironment,
+      updateEnvironment,
+      addEnvironment,
+      removeEnvironment,
       applyStarter,
       addResource,
       updateResource,
       updateResourceValue,
       updateExistingValue,
+      setResourceScope,
       removeResource,
       selectResource,
       getUniqueTfName,

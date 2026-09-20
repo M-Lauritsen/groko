@@ -204,10 +204,12 @@ export function moduleOrder(moduleIds: string[]): string[] {
 
 export function envTags(
   config: ProjectConfig,
-  env: string
+  envId: string,
+  envTagsOverride?: Record<string, string>
 ): Record<string, string> {
   return {
     ...config.tags,
-    Environment: env,
+    Environment: envId,
+    ...(envTagsOverride ?? {}),
   };
 }

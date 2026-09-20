@@ -16,13 +16,13 @@ export function ExportPanel() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
   const preview = useMemo(
-    () => previewHcl(state.config, state.resources),
-    [state.config, state.resources]
+    () => previewHcl(state.config, state.resources, state.environments),
+    [state.config, state.resources, state.environments]
   );
 
   const generated = useMemo(
-    () => generateProject(state.config, state.resources),
-    [state.config, state.resources]
+    () => generateProject(state.config, state.resources, state.environments),
+    [state.config, state.resources, state.environments]
   );
 
   const fileNames = useMemo(() => {
@@ -46,7 +46,7 @@ export function ExportPanel() {
   async function onDownload() {
     setBusy(true);
     try {
-      await downloadProjectZip(state.config, state.resources);
+      await downloadProjectZip(state.config, state.resources, state.environments);
     } finally {
       setBusy(false);
     }
@@ -75,6 +75,7 @@ export function ExportPanel() {
         <div className="flex items-center gap-2 flex-wrap">
           <SectionTitle>Export</SectionTitle>
           <Badge tone="sky">{state.resources.length} resources</Badge>
+          <Badge tone="violet">{state.environments.length} envs</Badge>
           <Badge tone="violet">{moduleCount} module files</Badge>
           {caCount > 0 && (
             <Badge tone="emerald">{caCount} container app{caCount === 1 ? "" : "s"}</Badge>

@@ -1,14 +1,35 @@
 "use client";
 
+import { useMemo } from "react";
 import { useProject } from "@/lib/store/project-context";
 import { getResourceType } from "@/lib/schema/resources";
 import { getUsedBy } from "@/lib/generate/deps";
+import {
+  normalizeScope,
+  resourcesVisibleInEnv,
+  scopeLabel,
+} from "@/lib/schema/environments";
 import { Card, SectionTitle, Badge, Button } from "@/components/ui/Field";
 import { UndoRedoControls } from "@/components/history/UndoRedoControls";
 
 export function ResourceList() {
-  const { state, selectResource, removeResource } = useProject();
-  const { resources, selectedResourceId } = state;
+  const { state, selectResource, removeResource, setActiveEnvironment } =
+    useProject();
+  const { resources, selectedResourceId, environments, activeEnvironmentId } =
+    state;
+
+  const visible = useMemo(
+    () => resourcesVisibleInEnv(resources, activeEnvironmentId),
+    [resources, activeEnvironmentId]
+  );
+
+  const sharedCount = visible.filter(
+    (r) => normalizeScope(r.scope).kind === "shared"
+  ).length;
+  const scopedCount = visible.length - sharedCount;
+
+  const activeEnv =
+    environments.find((e) => e.id === activeEnvironmentId) ?? environments[0];
 
   return (
     <Card className="p-4 flex flex-col h-full min-h-0">
@@ -16,17 +37,41 @@ export function ResourceList() {
         action={
           <div className="flex items-center gap-2">
             <UndoRedoControls compact />
-            <Badge tone="slate">{resources.length}</Badge>
+            <Badge tone="slate">{visible.length}</Badge>
           </div>
         }
       >
         Project resources
       </SectionTitle>
 
-      {resources.length === 0 ? (
+      <div className="mb-3 flex flex-wrap gap-1">
+        {environments.map((e) => (
+          <button
+            key={e.id}
+            type="button"
+            onClick={() => setActiveEnvironment(e.id)}
+            className={`rounded-md px-2 py-0.5 text-[11px] font-medium border ${
+              e.id === activeEnvironmentId
+                ? "border-sky-500 bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300"
+                : "border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300"
+            }`}
+          >
+            {e.displayName}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-slate-400 mb-2">
+        Showing shared + {activeEnv?.displayName ?? "env"} · {sharedCount}{" "}
+        shared · {scopedCount} scoped
+        {resources.length !== visible.length
+          ? ` · ${resources.length - visible.length} hidden (other envs)`
+          : ""}
+      </p>
+
+      {visible.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-center px-4">
           <div>
-            <p className="text-sm text-slate-500 mb-1">No resources yet</p>
+            <p className="text-sm text-slate-500 mb-1">No resources in this view</p>
             <p className="text-xs text-slate-400">
               Pick a starter or add from the catalogue →
             </p>
@@ -34,10 +79,11 @@ export function ResourceList() {
         </div>
       ) : (
         <ul className="flex-1 overflow-y-auto space-y-1 pr-1">
-          {resources.map((r) => {
+          {visible.map((r) => {
             const def = getResourceType(r.type);
             const selected = r.id === selectedResourceId;
             const usedBy = getUsedBy(r.id, resources);
+            const scope = normalizeScope(r.scope);
             return (
               <li key={r.id}>
                 <div
@@ -70,6 +116,9 @@ export function ResourceList() {
                         ) : (
                           <Badge tone="emerald">resource</Badge>
                         )}
+                        <Badge tone={scope.kind === "shared" ? "violet" : "sky"}>
+                          {scopeLabel(scope, environments)}
+                        </Badge>
                         {usedBy.length > 0 && (
                           <Badge tone="violet">
                             used by {usedBy.length}

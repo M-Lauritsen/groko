@@ -5,6 +5,14 @@ import assert from "node:assert/strict";
 import { generateProject, previewHcl } from "../src/lib/generate/hcl";
 import { getStarter } from "../src/lib/schema/starters";
 import type { ProjectConfig, ResourceInstance } from "../src/lib/schema/types";
+import {
+  defaultEnvironments,
+  envScope,
+  filterRefCandidates,
+  canReference,
+  resourcesVisibleInEnv,
+  sharedScope,
+} from "../src/lib/schema/environments";
 import { parseHcl, parseHclFiles } from "../src/lib/import/parse";
 import { mapToProject, mergeImportedResources } from "../src/lib/import/mapToProject";
 import { isReferenceValue } from "../src/lib/schema/types";
@@ -144,6 +152,7 @@ function main() {
       useExisting: false,
       values: { name: "rg", location: "westeurope", tags: {} },
       existingValues: {},
+      scope: sharedScope(),
     },
     {
       id: acrId,
@@ -158,6 +167,7 @@ function main() {
         admin_enabled: true,
       },
       existingValues: {},
+      scope: sharedScope(),
     },
     {
       id: envId,
@@ -170,6 +180,7 @@ function main() {
         location: { resourceId: rgId, attr: "location" },
       },
       existingValues: {},
+      scope: sharedScope(),
     },
     {
       id: appId,
@@ -194,6 +205,7 @@ function main() {
         identity_type: "None",
       },
       existingValues: {},
+      scope: sharedScope(),
     },
   ];
   const adminGen = generateProject(config, adminPath);
@@ -217,6 +229,7 @@ function main() {
       useExisting: false,
       values: { name: "rg", location: "westeurope", tags: {} },
       existingValues: {},
+      scope: sharedScope(),
     },
     {
       id: multiEnv,
@@ -229,6 +242,7 @@ function main() {
         location: { resourceId: multiRg, attr: "location" },
       },
       existingValues: {},
+      scope: sharedScope(),
     },
     {
       id: a1,
@@ -252,6 +266,7 @@ function main() {
         identity_type: "None",
       },
       existingValues: {},
+      scope: sharedScope(),
     },
     {
       id: a2,
@@ -275,6 +290,7 @@ function main() {
         identity_type: "None",
       },
       existingValues: {},
+      scope: sharedScope(),
     },
   ];
   const multiGen = generateProject(config, multi);
@@ -298,6 +314,7 @@ function main() {
       useExisting: false,
       values: { name: "rg", location: "westeurope", tags: {} },
       existingValues: {},
+      scope: sharedScope(),
     },
     {
       id: rKv,
@@ -312,6 +329,7 @@ function main() {
         enable_rbac_authorization: true,
       },
       existingValues: {},
+      scope: sharedScope(),
     },
     {
       id: rUai,
@@ -324,6 +342,7 @@ function main() {
         location: { resourceId: rRg, attr: "location" },
       },
       existingValues: {},
+      scope: sharedScope(),
     },
     {
       id: rEnv,
@@ -336,6 +355,7 @@ function main() {
         location: { resourceId: rRg, attr: "location" },
       },
       existingValues: {},
+      scope: sharedScope(),
     },
     {
       id: rApp,
@@ -375,6 +395,7 @@ function main() {
         http_concurrent_requests: 20,
       },
       existingValues: {},
+      scope: sharedScope(),
     },
   ];
   const richGen = generateProject(config, rich);
@@ -497,7 +518,122 @@ module "network" {
 
     const merged = mergeImportedResources([], summary.resources, "merge");
     assert.equal(merged.length, 4);
+    // Import defaults to shared unless env-named
+    assert.ok(merged.every((r) => r.scope?.kind === "shared" || r.scope?.kind === "environment"));
+    const envNamed = merged.find((r) => String(r.values.name ?? "").includes("import-demo"));
+    // rg-import-demo has no clear env token → shared
+    assert.equal(envNamed?.scope.kind, "shared");
     console.log("✓ Import: RG/VNet/subnet refs + data source + unsupported/module skip");
+  }
+
+  // 11) Environment objects drive tfvars (not hard-coded)
+  {
+    const envs = defaultEnvironments();
+    envs[0].knobs.acrSku = "Premium";
+    envs[0].knobs.namingSuffix = "-customdev";
+    envs[0].knobs.caCpu = 0.75;
+    const { files } = generateProject(config, [], envs);
+    assert.match(files["environments/dev.tfvars"], /acr_sku\s*=\s*"Premium"/);
+    assert.match(files["environments/dev.tfvars"], /naming_prefix\s*=\s*"smoke-customdev"/);
+    assert.match(files["environments/dev.tfvars"], /ca_cpu\s*=\s*0\.75/);
+    assert.match(files["environments/staging.tfvars"], /acr_sku\s*=\s*"Standard"/);
+    assert.match(files["environments/prod.tfvars"], /acr_sku\s*=\s*"Premium"/);
+    assert.match(files["environments/prod.tfvars"], /ca_ingress_external\s*=\s*false/);
+    assert.ok(files["environments/backend.dev.hcl"]);
+    // Custom env id
+    const custom = [
+      ...defaultEnvironments(),
+      {
+        id: "qa",
+        displayName: "QA",
+        knobs: {
+          namingSuffix: "-qa",
+          tags: { Environment: "qa" },
+          acrSku: "Basic",
+          caCpu: 0.25,
+          caMemory: "0.5Gi",
+          caMinReplicas: 0,
+          caMaxReplicas: 1,
+          caIngressExternal: true,
+        },
+      },
+    ];
+    const customGen = generateProject(config, [], custom);
+    assert.ok(customGen.files["environments/qa.tfvars"]);
+    assert.match(customGen.files["environments/qa.tfvars"], /environment\s*=\s*"qa"/);
+    assert.ok(customGen.files["environments/backend.qa.hcl"]);
+    console.log("✓ Tfvars generated from Environment objects (incl. custom id)");
+  }
+
+  // 12) Scope filtering + no cross-env refs in picker logic
+  {
+    const envs = defaultEnvironments();
+    const sharedRg: ResourceInstance = {
+      id: "rg",
+      type: "azurerm_resource_group",
+      tfName: "main",
+      useExisting: false,
+      values: { name: "rg" },
+      existingValues: {},
+      scope: sharedScope(),
+    };
+    const devApp: ResourceInstance = {
+      id: "app-dev",
+      type: "azurerm_container_app",
+      tfName: "app",
+      useExisting: false,
+      values: { name: "ca-dev" },
+      existingValues: {},
+      scope: envScope("dev"),
+    };
+    const prodApp: ResourceInstance = {
+      id: "app-prod",
+      type: "azurerm_container_app",
+      tfName: "app_prod",
+      useExisting: false,
+      values: { name: "ca-prod" },
+      existingValues: {},
+      scope: envScope("prod"),
+    };
+    const all = [sharedRg, devApp, prodApp];
+    const inDev = resourcesVisibleInEnv(all, "dev");
+    assert.equal(inDev.length, 2);
+    assert.ok(inDev.every((r) => r.id !== "app-prod"));
+    const inProd = resourcesVisibleInEnv(all, "prod");
+    assert.equal(inProd.length, 2);
+    assert.ok(inProd.every((r) => r.id !== "app-dev"));
+
+    assert.equal(canReference(devApp, sharedRg), true);
+    assert.equal(canReference(devApp, prodApp), false);
+    assert.equal(canReference(prodApp, devApp), false);
+    assert.equal(canReference(sharedRg, prodApp), false);
+
+    const candidates = filterRefCandidates(all, {
+      currentId: "app-dev",
+      refTypes: ["azurerm_container_app", "azurerm_resource_group"],
+      activeEnvironmentId: "dev",
+      current: devApp,
+    });
+    assert.ok(candidates.some((c) => c.id === "rg"));
+    assert.ok(!candidates.some((c) => c.id === "app-prod"));
+    assert.ok(!candidates.some((c) => c.id === "app-dev"));
+    console.log("✓ Scope filtering + cross-env refs blocked in picker logic");
+  }
+
+  // 13) Starter scopes: foundation shared, apps env-scoped
+  {
+    nextId = 1;
+    const aca = getStarter("acr-container-apps")!.build(config, makeId);
+    const shared = aca.filter((r) => r.scope.kind === "shared");
+    const scoped = aca.filter((r) => r.scope.kind === "environment");
+    assert.ok(shared.length >= 5);
+    assert.ok(scoped.some((r) => r.type === "azurerm_container_app"));
+    assert.ok(
+      scoped
+        .filter((r) => r.type === "azurerm_container_app")
+        .every((r) => r.scope.kind === "environment" && r.scope.environmentId === "dev")
+    );
+    console.log("✓ Starter scaffolds shared foundation + env-scoped app");
   }
 
   console.log("\nAll generate smoke tests passed.");

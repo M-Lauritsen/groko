@@ -1,6 +1,10 @@
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
-import type { ProjectConfig, ResourceInstance } from "../schema/types";
+import type {
+  Environment,
+  ProjectConfig,
+  ResourceInstance,
+} from "../schema/types";
 import { generateProject } from "./hcl";
 
 const GITIGNORE = `# Terraform
@@ -22,9 +26,10 @@ terraform.rc
 
 export async function downloadProjectZip(
   config: ProjectConfig,
-  resources: ResourceInstance[]
+  resources: ResourceInstance[],
+  environments?: Environment[]
 ): Promise<void> {
-  const { files } = generateProject(config, resources);
+  const { files } = generateProject(config, resources, environments);
   const zip = new JSZip();
   const folder = zip.folder(sanitizeFolderName(config.name)) ?? zip;
 
@@ -49,9 +54,10 @@ function sanitizeFolderName(name: string): string {
 /** Node-friendly: return zip as Buffer (for tests). */
 export async function buildProjectZipBuffer(
   config: ProjectConfig,
-  resources: ResourceInstance[]
+  resources: ResourceInstance[],
+  environments?: Environment[]
 ): Promise<Buffer> {
-  const { files } = generateProject(config, resources);
+  const { files } = generateProject(config, resources, environments);
   const zip = new JSZip();
   for (const [name, content] of Object.entries(files)) {
     zip.file(name, content);

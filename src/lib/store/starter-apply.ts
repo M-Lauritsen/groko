@@ -18,6 +18,7 @@ export function shouldConfirmStarterApply(resourceCount: number): boolean {
  * - replace: wipe resources and use starter scaffold
  * - merge: append starter resources (tfNames uniquified) via import merge
  * Empty canvas always behaves like replace regardless of mode.
+ * Environments / activeEnvironmentId are preserved.
  */
 export function applyStarterToState(
   state: ProjectState,
@@ -33,6 +34,7 @@ export function applyStarterToState(
 
   if (mode === "replace" || state.resources.length === 0) {
     return {
+      ...state,
       config,
       resources: built,
       selectedResourceId: built[0]?.id ?? null,
@@ -41,6 +43,7 @@ export function applyStarterToState(
 
   const resources = mergeImportedResources(state.resources, built, "merge");
   return {
+    ...state,
     config,
     resources,
     selectedResourceId: resources.find((r) => r.id === state.selectedResourceId)

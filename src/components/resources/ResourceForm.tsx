@@ -9,6 +9,7 @@ import {
   formatResourceLabel,
 } from "@/lib/generate/deps";
 import type { FieldDef, ReferenceValue } from "@/lib/schema/types";
+import { envScope, sharedScope } from "@/lib/schema/environments";
 import { ReferencePicker } from "./ReferencePicker";
 import { EnvVarsEditor, AppSecretsEditor } from "./ContainerAppExtras";
 import {
@@ -29,6 +30,7 @@ export function ResourceForm() {
     updateResource,
     updateResourceValue,
     updateExistingValue,
+    setResourceScope,
     selectResource,
     removeResource,
   } = useProject();
@@ -111,6 +113,8 @@ export function ResourceForm() {
           value={resource!.values[field.key]}
           resources={state.resources}
           currentId={resource!.id}
+          activeEnvironmentId={state.activeEnvironmentId}
+          environments={state.environments}
           onChange={(v: ReferenceValue | undefined) =>
             updateResourceValue(resource!.id, field.key, v)
           }
@@ -398,6 +402,36 @@ export function ResourceForm() {
           label="Use existing resource"
           description="Emit a data source instead of managing this resource. Fill identifying name / resource group below."
         />
+
+        <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+          <Label>Scope</Label>
+          <SelectInput
+            value={
+              resource.scope?.kind === "environment"
+                ? resource.scope.environmentId
+                : "shared"
+            }
+            onChange={(e) => {
+              const v = e.target.value;
+              setResourceScope(
+                resource.id,
+                v === "shared" ? sharedScope() : envScope(v)
+              );
+            }}
+          >
+            <option value="shared">Shared (all environments)</option>
+            {state.environments.map((env) => (
+              <option key={env.id} value={env.id}>
+                Scoped to {env.displayName}
+              </option>
+            ))}
+          </SelectInput>
+          <Hint>
+            Shared resources appear in every environment view. Env-scoped
+            resources only appear in their environment. Refs cannot cross
+            environments.
+          </Hint>
+        </div>
       </div>
 
       {resource.useExisting ? (

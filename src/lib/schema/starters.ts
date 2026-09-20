@@ -1,4 +1,5 @@
 import type { ProjectConfig, ResourceInstance } from "./types";
+import { envScope, sharedScope } from "./environments";
 
 export interface StarterTemplate {
   id: string;
@@ -57,6 +58,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: planId,
@@ -72,6 +74,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
         {
           id: appId,
@@ -88,6 +91,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
         {
           id: sqlId,
@@ -105,6 +109,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
         {
           id: dbId,
@@ -120,6 +125,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
       ];
     },
@@ -146,6 +152,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: stId,
@@ -163,6 +170,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: planId,
@@ -178,6 +186,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
       ];
     },
@@ -209,6 +218,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: vnetId,
@@ -223,6 +233,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: subnetId,
@@ -236,6 +247,7 @@ export const STARTERS: StarterTemplate[] = [
             address_prefixes: ["10.0.1.0/24"],
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: nsgId,
@@ -252,6 +264,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: assocId,
@@ -263,6 +276,7 @@ export const STARTERS: StarterTemplate[] = [
             network_security_group_id: { resourceId: nsgId, attr: "id" },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: pipId,
@@ -278,6 +292,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: nicId,
@@ -293,6 +308,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: vmId,
@@ -316,6 +332,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
       ];
     },
@@ -324,7 +341,7 @@ export const STARTERS: StarterTemplate[] = [
     id: "acr-container-apps",
     label: "ACR + Container Apps",
     description:
-      "RG, VNet + CAE subnet, ACR, managed identity + AcrPull, Key Vault, Log Analytics, VNet-integrated CAE, and a sample Container App (env vars + HTTP scale + KV secret)",
+      "Shared foundation (RG, VNet, ACR, MI, KV, LAW, CAE) + a Container App scoped to the dev environment (duplicate for staging/prod as needed)",
     icon: "🐳",
     build: (config, makeId) => {
       const rgId = makeId();
@@ -351,6 +368,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: vnetId,
@@ -366,6 +384,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: subnetId,
@@ -381,6 +400,7 @@ export const STARTERS: StarterTemplate[] = [
             delegation: "Microsoft.App/environments",
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: acrId,
@@ -397,6 +417,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: uaiId,
@@ -410,6 +431,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: roleId,
@@ -422,6 +444,7 @@ export const STARTERS: StarterTemplate[] = [
             principal_id: { resourceId: uaiId, attr: "principal_id" },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: kvId,
@@ -439,6 +462,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: roleKvId,
@@ -451,6 +475,7 @@ export const STARTERS: StarterTemplate[] = [
             principal_id: { resourceId: uaiId, attr: "principal_id" },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: lawId,
@@ -466,6 +491,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: envId,
@@ -483,6 +509,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: appId,
@@ -524,6 +551,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
       ];
     },

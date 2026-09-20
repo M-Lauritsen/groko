@@ -54,6 +54,32 @@ export interface ResourceTypeDef {
   defaultName: string;
 }
 
+/** Per-environment sizing / naming knobs (drive environments/*.tfvars). */
+export interface EnvironmentKnobs {
+  /** Appended to project namingPrefix in tfvars (e.g. "-dev", "-stg", "-prd"). */
+  namingSuffix: string;
+  /** Tags merged into var.tags (typically Environment=…). */
+  tags: Record<string, string>;
+  acrSku: string;
+  caCpu: number;
+  caMemory: string;
+  caMinReplicas: number;
+  caMaxReplicas: number;
+  caIngressExternal: boolean;
+}
+
+/** First-class deploy environment (dev / staging / prod / custom). */
+export interface Environment {
+  id: string;
+  displayName: string;
+  knobs: EnvironmentKnobs;
+}
+
+/** Resource visibility: shared across all envs, or scoped to one environment. */
+export type ResourceScope =
+  | { kind: "shared" }
+  | { kind: "environment"; environmentId: string };
+
 export interface ResourceInstance {
   id: string;
   type: string;
@@ -63,6 +89,8 @@ export interface ResourceInstance {
   values: Record<string, unknown>;
   /** Identifying values when useExisting */
   existingValues: Record<string, unknown>;
+  /** Shared across envs, or visible only in one environment */
+  scope: ResourceScope;
 }
 
 export interface ProjectConfig {
@@ -75,6 +103,10 @@ export interface ProjectConfig {
 
 export interface ProjectState {
   config: ProjectConfig;
+  /** First-class environments (drive tfvars / backend hcl keys). */
+  environments: Environment[];
+  /** Active environment for UI filtering (not an undo concern by itself). */
+  activeEnvironmentId: string;
   resources: ResourceInstance[];
   selectedResourceId: string | null;
 }

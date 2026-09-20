@@ -4,11 +4,17 @@
 
 import { getResourceType, RESOURCE_CATALOGUE } from "../schema/resources";
 import type {
+  Environment,
   FieldDef,
   ReferenceAttr,
   ReferenceValue,
   ResourceInstance,
 } from "../schema/types";
+import {
+  defaultEnvironments,
+  inferScopeFromName,
+  sharedScope,
+} from "../schema/environments";
 import type { HclBody, HclValue, ParsedBlock, ParseResult } from "./parse";
 import { isSimpleRef } from "./parse";
 
@@ -221,7 +227,10 @@ function applyNestedHeuristics(
   return unmapped;
 }
 
-export function mapToProject(parsed: ParseResult): ImportSummary {
+export function mapToProject(
+  parsed: ParseResult,
+  environments: Environment[] = defaultEnvironments()
+): ImportSummary {
   const warnings = [...parsed.warnings];
   const skipped: SkippedItem[] = [];
   let unmappedArgCount = 0;
@@ -376,6 +385,12 @@ export function mapToProject(parsed: ParseResult): ImportSummary {
       label
     );
 
+    const nameHint =
+      typeof values.name === "string"
+        ? values.name
+        : typeof existingValues.name === "string"
+          ? existingValues.name
+          : undefined;
     const instance: ResourceInstance = {
       id: uid(),
       type: block.type,
@@ -383,6 +398,10 @@ export function mapToProject(parsed: ParseResult): ImportSummary {
       useExisting,
       values,
       existingValues,
+      // Best-effort: env-named resources → that env; otherwise shared
+      scope: nameHint
+        ? inferScopeFromName(nameHint, environments)
+        : sharedScope(),
     };
     pending.push({ block, instance, rawAttrs: block.body.attrs });
   }

@@ -34,10 +34,11 @@ Not a perfect round-trip — nested blocks and complex HCL are best-effort.
 ## How export works
 
 1. **Setup** — name, region, prefix, tags; starters include **ACR + Container Apps** (VNet + MI + AcrPull + Key Vault sample secret + HTTP scale).
-2. **Resources** — catalogue includes identities, role assignments, ACR, CAE, and multiple container apps.
-3. **ACR auth** — per app: **Managed identity (recommended)** or Admin credentials (lab fallback).
-4. **Container App extras** — list editors for env vars and app secrets (plain → sensitive var, or Key Vault ref + optional Secrets User role); optional HTTP scale rule (`concurrent_requests`).
-5. **Export** — modular ZIP:
+2. **Environments** — first-class `dev` / `staging` / `prod` (add more as needed) with knobs (naming suffix, tags, ACR SKU, CA cpu/memory/replicas, ingress). Not a string flag on resources.
+3. **Resources** — each instance is **Shared** or **scoped to one environment**. Reference pickers only allow shared + same-env targets (no cross-env leakage). Catalogue has no `.tf` file tree in primary nav.
+4. **ACR auth** — per app: **Managed identity (recommended)** or Admin credentials (lab fallback).
+5. **Container App extras** — list editors for env vars and app secrets (plain → sensitive var, or Key Vault ref + optional Secrets User role); optional HTTP scale rule (`concurrent_requests`).
+6. **Export** — modular ZIP driven by Environment objects:
 
 ```
 config.tf                 # versions + provider + partial backend "azurerm" {}
@@ -83,7 +84,7 @@ Edit `environments/backend.*.hcl` (`storage_account_name`, etc.) and fill `CHANG
 
 ## Undo & safer starters
 
-- **Undo / Redo** — header and resource-list controls, plus `Cmd/Ctrl+Z` and `Shift+Cmd/Ctrl+Z` (or `Ctrl+Y`). History keeps ~40 snapshots of resources + selection; value typing is debounced (~300ms) so undo is not character-by-character. Snapshots cover add/remove, value edits, use-existing toggles, import merge/replace, and starter apply.
+- **Undo / Redo** — header and resource-list controls, plus `Cmd/Ctrl+Z` and `Shift+Cmd/Ctrl+Z` (or `Ctrl+Y`). History keeps ~40 snapshots of resources + selection + **environments/scopes**; value typing is debounced (~300ms) so undo is not character-by-character. Snapshots cover add/remove, value edits, use-existing toggles, import merge/replace, starter apply, and environment knob edits.
 - **Starter apply** — empty canvas applies immediately. If resources already exist, a confirm offers **Replace all**, **Merge with starter**, or **Cancel** (no silent wipe).
 
 ## Architecture
@@ -103,6 +104,7 @@ Containers + Identity: `azurerm_container_registry`, `azurerm_user_assigned_iden
 
 ## Known gaps
 
+- Export still emits one shared module tree (env differences are via tfvars knobs, not duplicated env-scoped HCL modules).
 - Azure only.
 - NSG rules are SSH/HTTP/HTTPS toggles.
 - Key Vault RBAC beyond tenant/RBAC flag is minimal.
