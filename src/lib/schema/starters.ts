@@ -132,13 +132,15 @@ export const STARTERS: StarterTemplate[] = [
   },
   {
     id: "storage-function",
-    label: "Storage + Function Plan",
-    description: "Resource group, storage account, and App Service plan (Y1 consumption)",
+    label: "Storage + Function App",
+    description:
+      "Shared RG + storage, Y1 Consumption plan + Linux Function App (Node 20) scoped to dev",
     icon: "⚡",
     build: (config, makeId) => {
       const rgId = makeId();
       const stId = makeId();
       const planId = makeId();
+      const funcId = makeId();
       const p = config.namingPrefix;
       return [
         {
@@ -183,6 +185,28 @@ export const STARTERS: StarterTemplate[] = [
             location: { resourceId: rgId, attr: "location" },
             os_type: "Linux",
             sku_name: "Y1",
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: envScope("dev"),
+        },
+        {
+          id: funcId,
+          type: "azurerm_linux_function_app",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "func"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            service_plan_id: { resourceId: planId, attr: "id" },
+            storage_account_id: { resourceId: stId, attr: "id" },
+            runtime_stack: "node",
+            runtime_version: "20",
+            https_only: true,
+            public_network_access_enabled: true,
+            app_settings: {},
+            identity_type: "None",
             tags: { ...config.tags },
           },
           existingValues: {},

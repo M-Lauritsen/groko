@@ -188,6 +188,38 @@ function applyNestedHeuristics(
       continue;
     }
 
+    // Function App site_config / application_stack — flatten to runtime_*
+    if (type === "azurerm_linux_function_app" && block.type === "site_config") {
+      const stack = block.body.blocks.find((b) => b.type === "application_stack");
+      if (stack) {
+        const a = stack.body.attrs;
+        if (typeof a.node_version === "string" || typeof a.node_version === "number") {
+          values.runtime_stack = "node";
+          values.runtime_version = String(a.node_version);
+        } else if (
+          typeof a.python_version === "string" ||
+          typeof a.python_version === "number"
+        ) {
+          values.runtime_stack = "python";
+          values.runtime_version = String(a.python_version);
+        } else if (
+          typeof a.dotnet_version === "string" ||
+          typeof a.dotnet_version === "number"
+        ) {
+          values.runtime_stack = "dotnet";
+          values.runtime_version = String(a.dotnet_version);
+        }
+      }
+      continue;
+    }
+
+    // Function App identity block
+    if (type === "azurerm_linux_function_app" && block.type === "identity") {
+      const t = block.body.attrs.type;
+      if (typeof t === "string") values.identity_type = t;
+      continue;
+    }
+
     // container_app template / ingress — best-effort flatten
     if (type === "azurerm_container_app") {
       if (block.type === "template") {
@@ -344,7 +376,22 @@ export function mapToProject(
         }
         continue;
       }
-      const field = fieldByHclKey(typeDef.fields, key);
+      // Function App: storage_account_name → catalogue storage_account_id (access key derived)
+      let mapKey = key;
+      if (
+        block.type === "azurerm_linux_function_app" &&
+        key === "storage_account_name"
+      ) {
+        mapKey = "storage_account_id";
+      }
+      if (
+        block.type === "azurerm_linux_function_app" &&
+        key === "storage_account_access_key"
+      ) {
+        // Derived from storage_account_id on emit — skip
+        continue;
+      }
+      const field = fieldByHclKey(typeDef.fields, mapKey);
       if (!field) {
         unmappedArgCount++;
         warnings.push(`${label}: unmapped argument "${key}"`);

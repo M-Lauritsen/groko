@@ -49,7 +49,11 @@ export const MODULE_DEFS: ModuleDef[] = [
   {
     id: "app_service",
     label: "App Service",
-    types: ["azurerm_service_plan", "azurerm_linux_web_app"],
+    types: [
+      "azurerm_service_plan",
+      "azurerm_linux_web_app",
+      "azurerm_linux_function_app",
+    ],
   },
   {
     id: "database",

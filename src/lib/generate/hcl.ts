@@ -158,6 +158,20 @@ function emitFieldValue(
     return null;
   }
 
+  // Function App: nested site_config / storage / identity handled specially
+  if (
+    resource.type === "azurerm_linux_function_app" &&
+    [
+      "storage_account_id",
+      "runtime_stack",
+      "runtime_version",
+      "identity_type",
+      "user_assigned_identity_id",
+    ].includes(field.key)
+  ) {
+    return null;
+  }
+
   // Skip NIC public IP / subnet — handled in ip_configuration
   if (
     resource.type === "azurerm_network_interface" &&
@@ -400,7 +414,86 @@ function emitWebAppBlock(
   return lines.join("\n");
 }
 
+function emitFunctionAppBlock(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const v = resource.values;
+  const def = getResourceType(resource.type)!;
+  const lines: string[] = [];
 
+  for (const field of def.fields) {
+    if (
+      [
+        "storage_account_id",
+        "runtime_stack",
+        "runtime_version",
+        "identity_type",
+        "user_assigned_identity_id",
+      ].includes(field.key)
+    ) {
+      continue;
+    }
+    const line = emitFieldValue(
+      field,
+      v[field.key],
+      resource,
+      resources,
+      sensitiveVars
+    );
+    if (line) lines.push(line);
+  }
+
+  // Storage: one catalogue pick → name + access key (azurerm 4.x)
+  const stRef = v.storage_account_id;
+  if (isReferenceValue(stRef)) {
+    lines.push(
+      `  storage_account_name       = ${resolveRef({ resourceId: stRef.resourceId, attr: "name" }, resources)}`
+    );
+    lines.push(
+      `  storage_account_access_key = ${resolveRef({ resourceId: stRef.resourceId, attr: "primary_access_key" }, resources)}`
+    );
+  } else if (typeof stRef === "string" && stRef) {
+    lines.push(`  storage_account_name = ${formatString(stRef)}`);
+    lines.push(
+      `  # TODO: set storage_account_access_key when storage is not a catalogue reference`
+    );
+  }
+
+  const stack = String(v.runtime_stack ?? "node");
+  const ver = String(v.runtime_version ?? "");
+  let stackInner = "";
+  if (stack === "python") {
+    stackInner = `      python_version = ${formatString(ver || "3.11")}`;
+  } else if (stack === "dotnet") {
+    stackInner = `      dotnet_version = ${formatString(ver || "8.0")}`;
+  } else {
+    stackInner = `      node_version = ${formatString(ver || "20")}`;
+  }
+  lines.push(`  site_config {
+    application_stack {
+${stackInner}
+    }
+  }`);
+
+  const identityType = String(v.identity_type ?? "None");
+  const uaiRef = v.user_assigned_identity_id;
+  if (identityType && identityType !== "None") {
+    if (identityType === "UserAssigned" && isReferenceValue(uaiRef)) {
+      lines.push(`  identity {
+    type         = ${formatString(identityType)}
+    identity_ids = [${resolveRef(uaiRef, resources)}]
+  }`);
+    } else if (identityType === "SystemAssigned") {
+      lines.push(`  identity {
+    type = "SystemAssigned"
+  }`);
+    }
+  }
+
+  return lines.join("\n");
+}
 
 /** True if image already includes a registry host (do not prefix ACR login_server). */
 function isFullyQualifiedContainerImage(image: string): boolean {
@@ -933,6 +1026,8 @@ export function emitResourceBlock(
     body = emitNicBlock(resource, resources, sensitiveVars);
   } else if (resource.type === "azurerm_linux_web_app") {
     body = emitWebAppBlock(resource, resources, sensitiveVars);
+  } else if (resource.type === "azurerm_linux_function_app") {
+    body = emitFunctionAppBlock(resource, resources, sensitiveVars);
   } else if (resource.type === "azurerm_container_app_environment") {
     body = emitContainerAppEnvBlock(resource, resources, sensitiveVars);
   } else if (resource.type === "azurerm_container_app") {
@@ -1009,6 +1104,9 @@ function moduleLabel(id: string): string {
 function attrsToExport(r: ResourceInstance): string[] {
   const def = getResourceType(r.type);
   const attrs = new Set<string>(def?.outputs ?? ["id", "name"]);
+  if (r.type === "azurerm_storage_account") {
+    attrs.add("primary_access_key");
+  }
   if (r.type === "azurerm_container_registry") {
     attrs.add("login_server");
     attrs.add("admin_username");
@@ -1041,6 +1139,7 @@ function sortResources(resources: ResourceInstance[]): ResourceInstance[] {
     "azurerm_key_vault",
     "azurerm_service_plan",
     "azurerm_linux_web_app",
+    "azurerm_linux_function_app",
     "azurerm_mssql_server",
     "azurerm_mssql_database",
     "azurerm_container_registry",

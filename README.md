@@ -33,7 +33,7 @@ Not a perfect round-trip — nested blocks and complex HCL are best-effort.
 
 ## How export works
 
-1. **Setup** — name, region, prefix, tags; starters include **ACR + Container Apps** (VNet + MI + AcrPull + Key Vault sample secret + HTTP scale) and **Private ACR** (Premium ACR public-off + PE subnet + hub Private DNS Use existing + VNet link + MI/AcrPull).
+1. **Setup** — name, region, prefix, tags; starters include **Storage + Function App**, **ACR + Container Apps** (VNet + MI + AcrPull + Key Vault sample secret + HTTP scale) and **Private ACR** (Premium ACR public-off + PE subnet + hub Private DNS Use existing + VNet link + MI/AcrPull).
 2. **Environments** — first-class `dev` / `staging` / `prod` (add more as needed) with knobs (naming suffix, tags, ACR SKU, CA cpu/memory/replicas, ingress). Not a string flag on resources.
 3. **Resources** — each instance is **Shared** or **scoped to one environment**. Reference pickers only allow shared + same-env targets (no cross-env leakage). Catalogue has no `.tf` file tree in primary nav.
 4. **ACR auth** — per app: **Managed identity (recommended)** or Admin credentials (lab fallback).
@@ -124,13 +124,25 @@ First-class catalogue resources (forms, refs, scopes — not raw HCL blobs):
 
 Starter **Private ACR** scaffolds VNet + PE subnet + Premium ACR (`public_network_access_enabled = false`) + PE + hub DNS (use existing) + VNet link + MI/AcrPull. Export goes to `modules/private_networking/`.
 
+
+## Function App
+
+First-class catalogue resource (forms, refs, scopes — not raw HCL):
+
+| Resource | Typical scope | Notes |
+|----------|---------------|-------|
+| `azurerm_service_plan` | Shared or env | Already catalogued; use **Y1** for Consumption |
+| `azurerm_linux_function_app` | Env (e.g. dev) | Plan + storage + runtime stack/version; app settings as key=value; optional identity (advanced) |
+| `azurerm_storage_account` | Shared | Backend storage; emit uses `name` + `primary_access_key` |
+
+UX stays short: pick plan, storage, runtime — not every Functions setting. Starter **Storage + Function App** scaffolds shared RG/storage + Y1 plan + Linux Function App (Node 20) scoped to **dev**. Export goes to `modules/app_service/` (with storage cross-module inputs).
+
 ## Known gaps
 
 - Export still emits one shared module tree (env differences are via tfvars knobs, not duplicated env-scoped HCL modules).
 - Azure only.
 - NSG rules are SSH/HTTP/HTTPS toggles.
 - Key Vault RBAC beyond tenant/RBAC flag is minimal.
-- No Function App resource yet.
 - Container App is single-container (no sidecars/Dapr).
 - Container App secrets from Key Vault use `vault_uri + secrets/<name>` (versionless); create the KV secret out-of-band or add an `azurerm_key_vault_secret` resource yourself.
 - Private Endpoint is ACR-focused (`registry` subresource); other PE targets not catalogued yet.

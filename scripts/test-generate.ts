@@ -69,15 +69,40 @@ function main() {
   assert.match(allHcl(webGen.files), /resource "azurerm_mssql_server"/);
   console.log("✓ Web App + SQL modular HCL looks good");
 
-  // 3) Storage + Function
+  // 3) Storage + Function App
   nextId = 1;
   const storage = getStarter("storage-function")!.build(config, makeId);
+  assert.ok(
+    storage.some((r) => r.type === "azurerm_linux_function_app"),
+    "starter must include Function App"
+  );
+  assert.ok(
+    storage.find((r) => r.type === "azurerm_linux_function_app")?.scope.kind ===
+      "environment"
+  );
   const stGen = generateProject(
     { ...config, starter: "storage-function" },
     storage
   );
-  assert.match(allHcl(stGen.files), /sku_name\s*=\s*"Y1"/);
-  console.log("✓ Storage + Function modular HCL looks good");
+  const stHcl = allHcl(stGen.files);
+  assert.match(stHcl, /sku_name\s*=\s*"Y1"/);
+  assert.match(stHcl, /resource "azurerm_linux_function_app"/);
+  assert.match(stHcl, /storage_account_name/);
+  assert.match(stHcl, /storage_account_access_key/);
+  assert.match(stHcl, /primary_access_key/);
+  assert.match(stHcl, /application_stack/);
+  assert.match(stHcl, /node_version\s*=\s*"20"/);
+  assert.ok(stGen.files["modules/app_service/main.tf"]);
+  assert.ok(stGen.files["modules/storage/main.tf"]);
+  assert.match(
+    stGen.files["modules/app_service/main.tf"],
+    /storage_account_name\s*=/
+  );
+  assert.match(
+    stGen.files["modules/storage/outputs.tf"],
+    /primary_access_key/
+  );
+  console.log("✓ Storage + Function App modular HCL looks good");
 
   // 4) ACR + Container Apps starter — MI + VNet + AcrPull
   nextId = 1;
@@ -635,7 +660,166 @@ module "network" {
         .every((r) => r.scope.kind === "environment" && r.scope.environmentId === "dev")
     );
     console.log("✓ Starter scaffolds shared foundation + env-scoped app");
+
+    nextId = 1;
+    const funcStarter = getStarter("storage-function")!.build(config, makeId);
+    assert.ok(
+      funcStarter
+        .filter((r) => r.type === "azurerm_storage_account")
+        .every((r) => r.scope.kind === "shared")
+    );
+    assert.ok(
+      funcStarter
+        .filter((r) => r.type === "azurerm_linux_function_app")
+        .every(
+          (r) =>
+            r.scope.kind === "environment" &&
+            r.scope.environmentId === "dev"
+        )
+    );
+    console.log("✓ Storage+Function starter: shared storage + env-scoped Function App");
   }
+
+  // 14b) Function App catalogue HCL + import round-trip (best-effort)
+  {
+    nextId = 1;
+    const rgId = makeId();
+    const stId = makeId();
+    const planId = makeId();
+    const funcId = makeId();
+    const resources: ResourceInstance[] = [
+      {
+        id: rgId,
+        type: "azurerm_resource_group",
+        tfName: "main",
+        useExisting: false,
+        values: { name: "rg-func", location: "westeurope", tags: {} },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: stId,
+        type: "azurerm_storage_account",
+        tfName: "main",
+        useExisting: false,
+        values: {
+          name: "stfunc001",
+          resource_group_name: { resourceId: rgId, attr: "name" },
+          location: { resourceId: rgId, attr: "location" },
+          account_tier: "Standard",
+          account_replication_type: "LRS",
+          account_kind: "StorageV2",
+          min_tls_version: "TLS1_2",
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: planId,
+        type: "azurerm_service_plan",
+        tfName: "func",
+        useExisting: false,
+        values: {
+          name: "asp-func",
+          resource_group_name: { resourceId: rgId, attr: "name" },
+          location: { resourceId: rgId, attr: "location" },
+          os_type: "Linux",
+          sku_name: "Y1",
+        },
+        existingValues: {},
+        scope: envScope("dev"),
+      },
+      {
+        id: funcId,
+        type: "azurerm_linux_function_app",
+        tfName: "main",
+        useExisting: false,
+        values: {
+          name: "func-main",
+          resource_group_name: { resourceId: rgId, attr: "name" },
+          location: { resourceId: rgId, attr: "location" },
+          service_plan_id: { resourceId: planId, attr: "id" },
+          storage_account_id: { resourceId: stId, attr: "id" },
+          runtime_stack: "python",
+          runtime_version: "3.11",
+          https_only: true,
+          public_network_access_enabled: true,
+          app_settings: { WEBSITE_RUN_FROM_PACKAGE: "1" },
+          identity_type: "SystemAssigned",
+          tags: {},
+        },
+        existingValues: {},
+        scope: envScope("dev"),
+      },
+    ];
+    const gen = generateProject(config, resources);
+    const appSvc = gen.files["modules/app_service/main.tf"];
+    assert.ok(appSvc);
+    assert.match(appSvc, /resource "azurerm_linux_function_app" "main"/);
+    assert.match(appSvc, /python_version\s*=\s*"3\.11"/);
+    assert.match(appSvc, /https_only\s*=\s*true/);
+    assert.match(appSvc, /WEBSITE_RUN_FROM_PACKAGE/);
+    assert.match(appSvc, /identity\s*\{/);
+    assert.match(appSvc, /SystemAssigned/);
+
+    const fixture = `
+resource "azurerm_resource_group" "main" {
+  name     = "rg-func-import"
+  location = "westeurope"
+}
+
+resource "azurerm_storage_account" "main" {
+  name                     = "stfuncimport"
+  resource_group_name      = azurerm_resource_group.main.name
+  location                 = azurerm_resource_group.main.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_service_plan" "func" {
+  name                = "asp-func"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  os_type             = "Linux"
+  sku_name            = "Y1"
+}
+
+resource "azurerm_linux_function_app" "main" {
+  name                       = "func-import"
+  resource_group_name        = azurerm_resource_group.main.name
+  location                   = azurerm_resource_group.main.location
+  service_plan_id            = azurerm_service_plan.func.id
+  storage_account_name       = azurerm_storage_account.main.name
+  storage_account_access_key = azurerm_storage_account.main.primary_access_key
+  https_only                 = true
+
+  site_config {
+    application_stack {
+      node_version = "20"
+    }
+  }
+
+  app_settings = {
+    CUSTOM_SETTING = "yes"
+  }
+}
+`;
+    const parsed = parseHcl(fixture, "func.tf");
+    const summary = mapToProject(parsed);
+    const func = summary.resources.find(
+      (r) => r.type === "azurerm_linux_function_app"
+    );
+    assert.ok(func, "Function App should be imported");
+    assert.equal(func!.values.runtime_stack, "node");
+    assert.equal(func!.values.runtime_version, "20");
+    assert.ok(isReferenceValue(func!.values.storage_account_id));
+    assert.ok(isReferenceValue(func!.values.service_plan_id));
+    const settings = func!.values.app_settings as Record<string, string>;
+    assert.equal(settings.CUSTOM_SETTING, "yes");
+    console.log("✓ Function App HCL emit + import mapper");
+  }
+
+
 
 
   // 14) Private ACR: PE + DNS zone (use existing) + VNet link + public access off
