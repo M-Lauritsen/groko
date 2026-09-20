@@ -36,6 +36,8 @@ import {
   Badge,
 } from "@/components/ui/Field";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { InfoTag } from "@/components/ui/InfoTag";
+import { RESOURCE_ASSISTANCE } from "@/lib/help/assistance";
 
 export function ResourceForm() {
   const {
@@ -86,6 +88,7 @@ export function ResourceForm() {
   const basicFields = def.fields.filter((f) => !f.advanced);
   const advancedFields = def.fields.filter((f) => f.advanced);
   const existingFields = def.fields.filter((f) => f.existingKey);
+  const assistance = RESOURCE_ASSISTANCE[resource.type];
 
   function setUseExisting(v: boolean) {
     updateResource(resource!.id, { useExisting: v });
@@ -434,6 +437,36 @@ export function ResourceForm() {
           Remove
         </Button>
       </div>
+
+      {assistance && (
+        <div className="mb-4">
+          <InfoTag title={assistance.title}>
+            <div className="space-y-3">
+              <p><strong>{assistance.summary}</strong></p>
+              <div>
+                <p className="font-semibold">When to use</p>
+                <p>{assistance.whenToUse}</p>
+              </div>
+              <div>
+                <p className="font-semibold">Security</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  {assistance.security.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <p className="font-semibold">Tips</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  {assistance.tips.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </InfoTag>
+        </div>
+      )}
 
       <div className="space-y-4 mb-5">
         {resource.useExisting && (

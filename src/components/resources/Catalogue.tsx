@@ -93,24 +93,18 @@ export function Catalogue({
 											title={`Add ${r.label}`}
 											aria-label={`Add ${r.label}`}>
 											<div className="flex items-center gap-2">
-												<span
-													className="text-base"
-													aria-hidden>
-													{r.icon}
-												</span>
+												<span className="text-base" aria-hidden>{r.icon}</span>
 												<div className="min-w-0 flex-1">
-													<div className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">
-														{r.label}
+													<div className="flex items-center justify-between gap-2">
+														<div className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">
+															{r.label}
+														</div>
 													</div>
 													<div className="text-[11px] text-slate-400 truncate">
 														{r.description} - {r.category}
 													</div>
 												</div>
-												<span
-													className="text-sky-500 text-lg leading-none shrink-0"
-													aria-hidden>
-													+
-												</span>
+												<span className="text-sky-500 text-lg leading-none shrink-0" aria-hidden>+</span>
 											</div>
 										</button>
 									</li>
