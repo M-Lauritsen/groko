@@ -62,6 +62,15 @@ export const MODULE_DEFS: ModuleDef[] = [
     types: ["azurerm_container_registry"],
   },
   {
+    id: "private_networking",
+    label: "Private Networking",
+    types: [
+      "azurerm_private_dns_zone",
+      "azurerm_private_dns_zone_virtual_network_link",
+      "azurerm_private_endpoint",
+    ],
+  },
+  {
     id: "identity",
     label: "Identity & RBAC",
     types: ["azurerm_user_assigned_identity", "azurerm_role_assignment"],

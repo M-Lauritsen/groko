@@ -193,6 +193,20 @@ function emitFieldValue(
     return null;
   }
 
+  // Private Endpoint: nested PSC + DNS zone group handled specially
+  if (
+    resource.type === "azurerm_private_endpoint" &&
+    [
+      "private_connection_resource_id",
+      "subresource_names",
+      "private_connection_name",
+      "is_manual_connection",
+      "private_dns_zone_id",
+    ].includes(field.key)
+  ) {
+    return null;
+  }
+
   if (resource.type === "azurerm_subnet" && field.key === "delegation") {
     return null;
   }
@@ -835,6 +849,71 @@ function emitSubnetBlock(
   return lines.join("\n");
 }
 
+function emitPrivateEndpointBlock(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const v = resource.values;
+  const def = getResourceType(resource.type)!;
+  const lines: string[] = [];
+  const nestedKeys = new Set([
+    "private_connection_resource_id",
+    "subresource_names",
+    "private_connection_name",
+    "is_manual_connection",
+    "private_dns_zone_id",
+  ]);
+  for (const field of def.fields) {
+    if (nestedKeys.has(field.key)) continue;
+    const line = emitFieldValue(
+      field,
+      v[field.key],
+      resource,
+      resources,
+      sensitiveVars
+    );
+    if (line) lines.push(line);
+  }
+
+  const connName =
+    typeof v.private_connection_name === "string" && v.private_connection_name
+      ? v.private_connection_name
+      : `psc-${resource.tfName}`;
+  const subresource =
+    typeof v.subresource_names === "string" && v.subresource_names
+      ? v.subresource_names
+      : "registry";
+  const target = v.private_connection_resource_id;
+  const targetExpr = isReferenceValue(target)
+    ? resolveRef(target, resources)
+    : typeof target === "string" && target
+      ? formatString(target)
+      : '"TODO_PRIVATE_CONNECTION_RESOURCE_ID"';
+  const manual = v.is_manual_connection ? "true" : "false";
+
+  lines.push(`  private_service_connection {
+    name                           = ${formatString(connName)}
+    private_connection_resource_id = ${targetExpr}
+    is_manual_connection           = ${manual}
+    subresource_names              = [${formatString(subresource)}]
+  }`);
+
+  const dnsZone = v.private_dns_zone_id;
+  if (dnsZone && (isReferenceValue(dnsZone) || (typeof dnsZone === "string" && dnsZone))) {
+    const zoneExpr = isReferenceValue(dnsZone)
+      ? resolveRef(dnsZone, resources)
+      : formatString(String(dnsZone));
+    lines.push(`  private_dns_zone_group {
+    name                 = "default"
+    private_dns_zone_ids = [${zoneExpr}]
+  }`);
+  }
+
+  return lines.join("\n");
+}
+
+
 export function emitResourceBlock(
   resource: ResourceInstance,
   resources: ResourceInstance[],
@@ -860,6 +939,8 @@ export function emitResourceBlock(
     body = emitContainerAppBlock(resource, resources, sensitiveVars);
   } else if (resource.type === "azurerm_subnet") {
     body = emitSubnetBlock(resource, resources, sensitiveVars);
+  } else if (resource.type === "azurerm_private_endpoint") {
+    body = emitPrivateEndpointBlock(resource, resources, sensitiveVars);
   } else {
     const lines: string[] = [];
     for (const field of def.fields) {
@@ -952,6 +1033,9 @@ function sortResources(resources: ResourceInstance[]): ResourceInstance[] {
     "azurerm_subnet_network_security_group_association",
     "azurerm_public_ip",
     "azurerm_network_interface",
+    "azurerm_private_dns_zone",
+    "azurerm_private_dns_zone_virtual_network_link",
+    "azurerm_private_endpoint",
     "azurerm_linux_virtual_machine",
     "azurerm_storage_account",
     "azurerm_key_vault",

@@ -420,13 +420,28 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
+        const useExisting = Boolean(def.preferUseExisting);
+        const existingValues: Record<string, unknown> = {};
+        if (useExisting) {
+          for (const f of def.fields) {
+            if (f.existingKey) {
+              const cur = values[f.key];
+              if (typeof cur === "string" && cur) {
+                existingValues[f.key] = cur;
+              } else if (f.defaultValue !== undefined && typeof f.defaultValue === "string") {
+                existingValues[f.key] = f.defaultValue;
+              }
+            }
+          }
+        }
+
         const instance: ResourceInstance = {
           id,
           type,
           tfName,
-          useExisting: false,
+          useExisting,
           values,
-          existingValues: {},
+          existingValues,
           scope: defaultScopeForNewResource(type, s.activeEnvironmentId),
         };
 

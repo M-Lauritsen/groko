@@ -33,7 +33,7 @@ Not a perfect round-trip — nested blocks and complex HCL are best-effort.
 
 ## How export works
 
-1. **Setup** — name, region, prefix, tags; starters include **ACR + Container Apps** (VNet + MI + AcrPull + Key Vault sample secret + HTTP scale).
+1. **Setup** — name, region, prefix, tags; starters include **ACR + Container Apps** (VNet + MI + AcrPull + Key Vault sample secret + HTTP scale) and **Private ACR** (Premium ACR public-off + PE subnet + hub Private DNS Use existing + VNet link + MI/AcrPull).
 2. **Environments** — first-class `dev` / `staging` / `prod` (add more as needed) with knobs (naming suffix, tags, ACR SKU, CA cpu/memory/replicas, ingress). Not a string flag on resources.
 3. **Resources** — each instance is **Shared** or **scoped to one environment**. Reference pickers only allow shared + same-env targets (no cross-env leakage). Catalogue has no `.tf` file tree in primary nav.
 4. **ACR auth** — per app: **Managed identity (recommended)** or Admin credentials (lab fallback).
@@ -49,7 +49,7 @@ environments/
   dev.tfvars / staging.tfvars / prod.tfvars   # meaningfully different sizing
   backend.dev.hcl / backend.staging.hcl / backend.prod.hcl
 modules/
-  resource_group/ networking/ identity/ container_registry/ container_apps/ …
+  resource_group/ networking/ private_networking/ identity/ container_registry/ container_apps/ …
 README.md
 ```
 
@@ -100,7 +100,29 @@ scripts/test-generate.ts
 
 ## Catalogue highlights
 
+Private networking (first-class catalogue resources, not raw HCL):
+
+- `azurerm_private_endpoint` — ACR `registry` subresource; emits `private_service_connection` + optional `private_dns_zone_group` (azurerm ~> 4.x pattern; no separate A record).
+- `azurerm_private_dns_zone` — defaults to **Use existing** (shared hub DNS); create is secondary.
+- `azurerm_private_dns_zone_virtual_network_link` — typically **Shared**; list badge shows `VNet link · Shared hub` (or the owning environment).
+
+Scope: DNS zone + VNet link default **shared**; PE can be shared or env-scoped. Reference pickers still block cross-env refs.
+
+
+
 Containers + Identity: `azurerm_container_registry`, `azurerm_user_assigned_identity`, `azurerm_role_assignment` (AcrPull / Key Vault Secrets User), `azurerm_log_analytics_workspace`, `azurerm_container_app_environment` (optional `infrastructure_subnet_id` + workload profile), `azurerm_container_app` (MI or admin registry auth, **env vars**, **app secrets** with plain or Key Vault refs, **HTTP scale rule**). Subnets support `Microsoft.App/environments` delegation.
+
+## Private ACR
+
+First-class catalogue resources (forms, refs, scopes — not raw HCL blobs):
+
+| Resource | Typical scope | Notes |
+|----------|---------------|-------|
+| `azurerm_private_dns_zone` | Shared | Defaults to **Use existing** (hub DNS). Zone name `privatelink.azurecr.io`. |
+| `azurerm_private_dns_zone_virtual_network_link` | Shared | Badge shows **VNet link · Shared hub** (or owning env). |
+| `azurerm_private_endpoint` | Shared or env | ACR `registry` subresource; `private_dns_zone_group` on the PE (azurerm ~> 4.x). |
+
+Starter **Private ACR** scaffolds VNet + PE subnet + Premium ACR (`public_network_access_enabled = false`) + PE + hub DNS (use existing) + VNet link + MI/AcrPull. Export goes to `modules/private_networking/`.
 
 ## Known gaps
 
@@ -111,7 +133,7 @@ Containers + Identity: `azurerm_container_registry`, `azurerm_user_assigned_iden
 - No Function App resource yet.
 - Container App is single-container (no sidecars/Dapr).
 - Container App secrets from Key Vault use `vault_uri + secrets/<name>` (versionless); create the KV secret out-of-band or add an `azurerm_key_vault_secret` resource yourself.
-- ACR private endpoint / private DNS not modeled (CAE VNet integration is).
+- Private Endpoint is ACR-focused (`registry` subresource); other PE targets not catalogued yet.
 - System-assigned identity + AcrPull role assignment is not auto-wired (user-assigned path is).
 - Module boundaries are fixed groupings.
 - Terraform import is best-effort (not full HCL2); modules/for_each/complex expressions are skipped.

@@ -52,6 +52,8 @@ export interface ResourceTypeDef {
   outputs: ReferenceAttr[];
   /** Suggested default instance name */
   defaultName: string;
+  /** When true, catalogue add defaults Use existing on (e.g. shared hub Private DNS). */
+  preferUseExisting?: boolean;
 }
 
 /** Per-environment sizing / naming knobs (drive environments/*.tfvars). */

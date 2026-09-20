@@ -431,6 +431,7 @@ function main() {
     "storage-function",
     "vnet-vm",
     "acr-container-apps",
+    "private-acr",
   ]) {
     assert.ok(getStarter(id), `starter ${id} missing`);
   }
@@ -635,6 +636,68 @@ module "network" {
     );
     console.log("✓ Starter scaffolds shared foundation + env-scoped app");
   }
+
+
+  // 14) Private ACR: PE + DNS zone (use existing) + VNet link + public access off
+  {
+    nextId = 1;
+    const priv = getStarter("private-acr");
+    assert.ok(priv);
+    const resources = priv!.build(config, makeId);
+    const dns = resources.find((r) => r.type === "azurerm_private_dns_zone");
+    assert.ok(dns);
+    assert.equal(dns!.useExisting, true);
+    assert.equal(dns!.scope.kind, "shared");
+    assert.equal(dns!.existingValues.name, "privatelink.azurecr.io");
+
+    const link = resources.find(
+      (r) => r.type === "azurerm_private_dns_zone_virtual_network_link"
+    );
+    assert.ok(link);
+    assert.equal(link!.scope.kind, "shared");
+
+    const pe = resources.find((r) => r.type === "azurerm_private_endpoint");
+    assert.ok(pe);
+    assert.equal(pe!.scope.kind, "shared");
+
+    const acr = resources.find((r) => r.type === "azurerm_container_registry");
+    assert.ok(acr);
+    assert.equal(acr!.values.public_network_access_enabled, false);
+    assert.equal(acr!.values.sku, "Premium");
+
+    const gen = generateProject(
+      { ...config, starter: "private-acr" },
+      resources
+    );
+    assert.ok(gen.files["modules/private_networking/main.tf"]);
+    const pn = gen.files["modules/private_networking/main.tf"];
+    assert.match(pn, /data "azurerm_private_dns_zone"/);
+    assert.match(pn, /privatelink\.azurecr\.io/);
+    assert.match(pn, /resource "azurerm_private_dns_zone_virtual_network_link"/);
+    assert.match(pn, /resource "azurerm_private_endpoint"/);
+    assert.match(pn, /private_service_connection\s*\{/);
+    assert.match(pn, /subresource_names\s*=\s*\["registry"\]/);
+    assert.match(pn, /private_dns_zone_group\s*\{/);
+    assert.match(pn, /private_dns_zone_ids/);
+
+    const acrHcl = gen.files["modules/container_registry/main.tf"];
+    assert.match(acrHcl, /public_network_access_enabled\s*=\s*false/);
+
+    // Cross-env: shared PE may not reference env-scoped ACR
+    const envAcr = {
+      ...acr!,
+      id: "acr-dev",
+      scope: envScope("dev"),
+    };
+    const sharedPe = { ...pe!, id: "pe-shared", scope: sharedScope() };
+    assert.equal(canReference(sharedPe, envAcr), false);
+    assert.equal(canReference(sharedPe, { ...acr!, scope: sharedScope() }), true);
+
+    console.log(
+      "✓ Private ACR starter: PE + hub DNS (use existing) + VNet link + public off"
+    );
+  }
+
 
   console.log("\nAll generate smoke tests passed.");
 }

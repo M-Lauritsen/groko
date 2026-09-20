@@ -556,6 +556,168 @@ export const STARTERS: StarterTemplate[] = [
       ];
     },
   },
+
+  {
+    id: "private-acr",
+    label: "Private ACR",
+    description:
+      "Shared VNet + PE subnet + Premium ACR (public access off) + private endpoint + hub Private DNS (Use existing) + VNet link + MI/AcrPull. Optional CAE/app not included — add from catalogue or merge with ACR + Container Apps.",
+    icon: "🔐",
+    build: (config, makeId) => {
+      const rgId = makeId();
+      const vnetId = makeId();
+      const peSubnetId = makeId();
+      const acrId = makeId();
+      const dnsId = makeId();
+      const linkId = makeId();
+      const peId = makeId();
+      const uaiId = makeId();
+      const roleId = makeId();
+      const p = config.namingPrefix;
+      return [
+        {
+          id: rgId,
+          type: "azurerm_resource_group",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "rg"),
+            location: config.location,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: vnetId,
+          type: "azurerm_virtual_network",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "vnet"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            address_space: ["10.0.0.0/16"],
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: peSubnetId,
+          type: "azurerm_subnet",
+          tfName: "private_endpoints",
+          useExisting: false,
+          values: {
+            name: "snet-pe",
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            virtual_network_name: { resourceId: vnetId, attr: "name" },
+            address_prefixes: ["10.0.8.0/24"],
+            delegation: "",
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: acrId,
+          type: "azurerm_container_registry",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: acrName(p),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            sku: "Premium",
+            admin_enabled: false,
+            public_network_access_enabled: false,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: dnsId,
+          type: "azurerm_private_dns_zone",
+          tfName: "acr",
+          useExisting: true,
+          values: {
+            name: "privatelink.azurecr.io",
+            resource_group_name: "rg-hub-dns",
+            tags: { ...config.tags },
+          },
+          existingValues: {
+            name: "privatelink.azurecr.io",
+            resource_group_name: "rg-hub-dns",
+          },
+          scope: sharedScope(),
+        },
+        {
+          id: linkId,
+          type: "azurerm_private_dns_zone_virtual_network_link",
+          tfName: "acr",
+          useExisting: false,
+          values: {
+            name: named(p, "dns-link-acr"),
+            resource_group_name: "rg-hub-dns",
+            private_dns_zone_name: { resourceId: dnsId, attr: "name" },
+            virtual_network_id: { resourceId: vnetId, attr: "id" },
+            registration_enabled: false,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: peId,
+          type: "azurerm_private_endpoint",
+          tfName: "acr",
+          useExisting: false,
+          values: {
+            name: named(p, "pe-acr"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            subnet_id: { resourceId: peSubnetId, attr: "id" },
+            private_connection_resource_id: { resourceId: acrId, attr: "id" },
+            subresource_names: "registry",
+            private_connection_name: "psc-acr",
+            is_manual_connection: false,
+            private_dns_zone_id: { resourceId: dnsId, attr: "id" },
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: uaiId,
+          type: "azurerm_user_assigned_identity",
+          tfName: "acrpull",
+          useExisting: false,
+          values: {
+            name: named(p, "id-acrpull"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: roleId,
+          type: "azurerm_role_assignment",
+          tfName: "acr_pull",
+          useExisting: false,
+          values: {
+            scope: { resourceId: acrId, attr: "id" },
+            role_definition_name: "AcrPull",
+            principal_id: { resourceId: uaiId, attr: "principal_id" },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+      ];
+    },
+  },
+
 ];
 
 export function getStarter(id: string): StarterTemplate | undefined {

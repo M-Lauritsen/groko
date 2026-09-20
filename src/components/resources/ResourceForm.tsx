@@ -399,8 +399,16 @@ export function ResourceForm() {
               updateResource(resource.id, { existingValues: seed });
             }
           }}
-          label="Use existing resource"
-          description="Emit a data source instead of managing this resource. Fill identifying name / resource group below."
+          label={
+            resource.type === "azurerm_private_dns_zone"
+              ? "Use existing (recommended for shared hub DNS)"
+              : "Use existing resource"
+          }
+          description={
+            resource.type === "azurerm_private_dns_zone"
+              ? "Default for Private DNS: look up an existing hub zone (data source) instead of creating a duplicate. Switch off only if this project should create the zone."
+              : "Emit a data source instead of managing this resource. Fill identifying name / resource group below."
+          }
         />
 
         <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
@@ -427,9 +435,21 @@ export function ResourceForm() {
             ))}
           </SelectInput>
           <Hint>
-            Shared resources appear in every environment view. Env-scoped
-            resources only appear in their environment. Refs cannot cross
-            environments.
+            {resource.type ===
+            "azurerm_private_dns_zone_virtual_network_link" ? (
+              <>
+                VNet DNS links are usually <strong>Shared</strong> (hub
+                networking). The badge shows which environment owns an
+                env-scoped link; prefer Shared so every env resolves
+                privatelink zones.
+              </>
+            ) : (
+              <>
+                Shared resources appear in every environment view. Env-scoped
+                resources only appear in their environment. Refs cannot cross
+                environments.
+              </>
+            )}
           </Hint>
         </div>
       </div>

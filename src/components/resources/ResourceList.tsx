@@ -117,7 +117,12 @@ export function ResourceList() {
                           <Badge tone="emerald">resource</Badge>
                         )}
                         <Badge tone={scope.kind === "shared" ? "violet" : "sky"}>
-                          {scopeLabel(scope, environments)}
+                          {r.type ===
+                          "azurerm_private_dns_zone_virtual_network_link"
+                            ? scope.kind === "shared"
+                              ? "VNet link · Shared hub"
+                              : `VNet link · ${scopeLabel(scope, environments)}`
+                            : scopeLabel(scope, environments)}
                         </Badge>
                         {usedBy.length > 0 && (
                           <Badge tone="violet">
