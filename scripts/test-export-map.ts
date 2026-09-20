@@ -27,6 +27,7 @@ import {
   buildExportReviewSummary,
 } from "../src/lib/generate/export-map";
 import { generateProject } from "../src/lib/generate/hcl";
+import { moduleOrder } from "../src/lib/generate/modules";
 import {
   createHistory,
   mutateWithHistory,
@@ -61,6 +62,36 @@ function main() {
   const vnet = res("r2", "azurerm_virtual_network", "hub");
   const sa = res("r3", "azurerm_storage_account", "data");
   const resources = [rg, vnet, sa];
+
+  assert.deepEqual(
+    moduleOrder([
+      "private_networking",
+      "database",
+      "compute",
+      "identity",
+      "container_registry",
+      "container_apps",
+      "app_service",
+      "security",
+      "storage",
+      "networking",
+      "resource_group",
+    ]),
+    [
+      "resource_group",
+      "networking",
+      "storage",
+      "security",
+      "app_service",
+      "container_apps",
+      "container_registry",
+      "identity",
+      "compute",
+      "database",
+      "private_networking",
+    ]
+  );
+  console.log("✓ export metadata uses canonical module order");
 
   // Defaults match MODULE_DEFS grouping
   {

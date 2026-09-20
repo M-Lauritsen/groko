@@ -13,6 +13,128 @@ export interface ModuleDef {
   types: string[];
 }
 
+/**
+ * Stable human-readable build order for generated resource blocks.
+ * Terraform still schedules resources from references between them.
+ */
+export const RESOURCE_TYPE_ORDER = [
+  "azurerm_resource_group",
+  "azurerm_virtual_network",
+  "azurerm_subnet",
+  "azurerm_network_security_group",
+  "azurerm_subnet_network_security_group_association",
+  "azurerm_public_ip",
+  "azurerm_network_interface",
+  "azurerm_storage_account",
+  "azurerm_key_vault",
+  "azurerm_service_plan",
+  "azurerm_log_analytics_workspace",
+  "azurerm_application_insights",
+  "azurerm_container_registry",
+  "azurerm_user_assigned_identity",
+  "azurerm_role_assignment",
+  "azurerm_linux_virtual_machine",
+  "azurerm_linux_web_app",
+  "azurerm_linux_function_app",
+  "azurerm_mssql_server",
+  "azurerm_mssql_database",
+  "azurerm_container_app_environment",
+  "azurerm_container_app",
+  "azurerm_private_dns_zone",
+  "azurerm_private_dns_zone_virtual_network_link",
+  "azurerm_private_endpoint",
+] as const;
+
+export interface ResourceBuildStage {
+  id: string;
+  label: string;
+  types: readonly string[];
+}
+
+export const RESOURCE_BUILD_STAGES: readonly ResourceBuildStage[] = [
+  {
+    id: "foundation",
+    label: "Resource Group & foundation",
+    types: ["azurerm_resource_group"],
+  },
+  {
+    id: "networking",
+    label: "Networking",
+    types: [
+      "azurerm_virtual_network",
+      "azurerm_subnet",
+      "azurerm_network_security_group",
+      "azurerm_subnet_network_security_group_association",
+      "azurerm_public_ip",
+      "azurerm_network_interface",
+    ],
+  },
+  {
+    id: "platform-prerequisites",
+    label: "Storage, security & platform prerequisites",
+    types: [
+      "azurerm_storage_account",
+      "azurerm_key_vault",
+      "azurerm_service_plan",
+      "azurerm_log_analytics_workspace",
+      "azurerm_application_insights",
+      "azurerm_container_registry",
+    ],
+  },
+  {
+    id: "identity",
+    label: "Identity & RBAC",
+    types: ["azurerm_user_assigned_identity", "azurerm_role_assignment"],
+  },
+  {
+    id: "workloads",
+    label: "Workloads",
+    types: [
+      "azurerm_linux_virtual_machine",
+      "azurerm_linux_web_app",
+      "azurerm_linux_function_app",
+      "azurerm_mssql_server",
+      "azurerm_mssql_database",
+      "azurerm_container_app_environment",
+      "azurerm_container_app",
+    ],
+  },
+  {
+    id: "private-networking",
+    label: "Private networking integrations",
+    types: [
+      "azurerm_private_dns_zone",
+      "azurerm_private_dns_zone_virtual_network_link",
+      "azurerm_private_endpoint",
+    ],
+  },
+];
+
+const resourceTypeOrder = new Map<string, number>(
+  RESOURCE_TYPE_ORDER.map((type, index) => [type, index])
+);
+
+export function resourceTypeBuildOrder(type: string): number {
+  return resourceTypeOrder.get(type) ?? Number.MAX_SAFE_INTEGER;
+}
+
+export function resourceBuildStageForType(
+  type: string
+): ResourceBuildStage | undefined {
+  return RESOURCE_BUILD_STAGES.find((stage) => stage.types.includes(type));
+}
+
+export function sortResourcesByBuildOrder(
+  resources: ResourceInstance[]
+): ResourceInstance[] {
+  return [...resources].sort((a, b) => {
+    const ai = resourceTypeBuildOrder(a.type);
+    const bi = resourceTypeBuildOrder(b.type);
+    if (ai !== bi) return ai - bi;
+    return a.tfName.localeCompare(b.tfName);
+  });
+}
+
 export const MODULE_DEFS: ModuleDef[] = [
   {
     id: "resource_group",
@@ -208,11 +330,20 @@ export function collectRefsFromResources(
 }
 
 export function moduleOrder(moduleIds: string[]): string[] {
-  const order = MODULE_DEFS.map((m) => m.id);
+  const order = MODULE_DEFS.map((module) => {
+    const firstType = module.types.reduce(
+      (first, type) =>
+        Math.min(first, resourceTypeOrder.get(type) ?? Number.MAX_SAFE_INTEGER),
+      Number.MAX_SAFE_INTEGER
+    );
+    return { id: module.id, order: firstType };
+  });
   return [...moduleIds].sort((a, b) => {
-    const ai = order.indexOf(a);
-    const bi = order.indexOf(b);
-    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    const ai =
+      order.find((item) => item.id === a)?.order ?? Number.MAX_SAFE_INTEGER;
+    const bi =
+      order.find((item) => item.id === b)?.order ?? Number.MAX_SAFE_INTEGER;
+    return ai - bi || a.localeCompare(b);
   });
 }
 

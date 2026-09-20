@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useProject } from "@/lib/store/project-context";
 import { getResourceType } from "@/lib/schema/resources";
 import { getUsedBy } from "@/lib/generate/deps";
+import { sortResourcesByBuildOrder } from "@/lib/generate/modules";
 import {
   hubOwnershipBadgeText,
   isHubDnsType,
@@ -27,6 +28,7 @@ import {
   ResourcesEmptyState,
   focusCataloguePanelSearch,
 } from "./ResourcesEmptyState";
+import { BuildOrderGuide } from "./BuildOrderGuide";
 
 export function ResourceList({
   viewMode = "list",
@@ -44,7 +46,10 @@ export function ResourceList({
     state;
 
   const visible = useMemo(
-    () => resourcesVisibleInEnv(resources, activeEnvironmentId),
+    () =>
+      sortResourcesByBuildOrder(
+        resourcesVisibleInEnv(resources, activeEnvironmentId)
+      ),
     [resources, activeEnvironmentId]
   );
 
@@ -96,6 +101,9 @@ export function ResourceList({
           ? ` · ${resources.length - visible.length} hidden (other envs)`
           : ""}
       </p>
+      <div className="mb-3">
+        <BuildOrderGuide />
+      </div>
 
       {visible.length === 0 ? (
         <ResourcesEmptyState

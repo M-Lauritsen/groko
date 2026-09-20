@@ -20,6 +20,7 @@ import { UndoRedoControls } from "@/components/history/UndoRedoControls";
 import { TierBadge } from "@/components/project/TierBadge";
 import { Catalogue } from "./Catalogue";
 import { ResourcesEmptyState } from "./ResourcesEmptyState";
+import { BuildOrderGuide } from "./BuildOrderGuide";
 
 export type ResourcesViewMode = "list" | "graph";
 
@@ -206,6 +207,9 @@ export function DependencyGraph({
           ? ` · ${resources.length - visible.length} hidden (other envs)`
           : ""}
       </p>
+      <div className="mb-3">
+        <BuildOrderGuide />
+      </div>
 
       {visible.length === 0 ? (
         <ResourcesEmptyState

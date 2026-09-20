@@ -17,6 +17,10 @@ import {
 import { parseHcl, parseHclFiles } from "../src/lib/import/parse";
 import { mapToProject, mergeImportedResources } from "../src/lib/import/mapToProject";
 import { isReferenceValue } from "../src/lib/schema/types";
+import {
+  RESOURCE_TYPE_ORDER,
+  sortResourcesByBuildOrder,
+} from "../src/lib/generate/modules";
 
 let nextId = 1;
 function makeId(): string {
@@ -40,12 +44,57 @@ function allHcl(files: Record<string, string>): string {
 function main() {
   console.log("Azure TF Builder — generate smoke test\n");
 
+  // One canonical order drives block output and module/export metadata.
+  {
+    const types = [
+      "azurerm_private_endpoint",
+      "azurerm_container_app",
+      "azurerm_resource_group",
+      "azurerm_log_analytics_workspace",
+      "azurerm_virtual_network",
+      "azurerm_user_assigned_identity",
+    ];
+    const ordered = sortResourcesByBuildOrder(
+      types.map((type, index) => ({
+        id: `order_${index}`,
+        type,
+        tfName: `resource_${index}`,
+        useExisting: false,
+        values: {},
+        existingValues: {},
+        scope: sharedScope(),
+      }))
+    );
+    assert.deepEqual(
+      ordered.map((resource) => resource.type),
+      [
+        "azurerm_resource_group",
+        "azurerm_virtual_network",
+        "azurerm_log_analytics_workspace",
+        "azurerm_user_assigned_identity",
+        "azurerm_container_app",
+        "azurerm_private_endpoint",
+      ]
+    );
+    assert.equal(RESOURCE_TYPE_ORDER.at(-1), "azurerm_private_endpoint");
+    console.log("✓ canonical resource build order");
+  }
+
   // 1) Modular layout basics
   const starter = getStarter("vnet-vm");
   assert.ok(starter);
   const resources = starter!.build(config, makeId);
   const { files, sensitiveVars } = generateProject(config, resources);
   assert.ok(files["config.tf"]);
+  assert.match(
+    files["main.tf"],
+    /Module order is a stable build guide; Terraform schedules references automatically\./
+  );
+  assert.match(files["README.md"], /## Stable build order/);
+  assert.match(
+    files["README.md"],
+    /Terraform does not apply these blocks sequentially/
+  );
   assert.match(files["config.tf"], /backend "azurerm" \{\}/);
   assert.ok(!files["config.tf"].includes("# backend \"azurerm\" {"));
   assert.ok(files["environments/backend.dev.hcl"]);

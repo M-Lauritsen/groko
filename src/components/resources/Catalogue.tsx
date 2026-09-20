@@ -1,10 +1,12 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
+import { RESOURCE_CATALOGUE } from "@/lib/schema/resources";
 import {
-  RESOURCE_CATALOGUE,
-  getCategories,
-} from "@/lib/schema/resources";
+  RESOURCE_BUILD_STAGES,
+  resourceBuildStageForType,
+  resourceTypeBuildOrder,
+} from "@/lib/generate/modules";
 import { useProject } from "@/lib/store/project-context";
 import {
   Card,
@@ -32,18 +34,21 @@ export function Catalogue({
 } = {}) {
   const { addResource } = useProject();
   const [query, setQuery] = useState("");
-  const categories = getCategories();
   const searchId = useId();
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return RESOURCE_CATALOGUE;
-    return RESOURCE_CATALOGUE.filter(
-      (r) =>
-        r.label.toLowerCase().includes(q) ||
-        r.type.toLowerCase().includes(q) ||
-        r.description.toLowerCase().includes(q) ||
-        r.category.toLowerCase().includes(q)
+    const matching = !q
+      ? RESOURCE_CATALOGUE
+      : RESOURCE_CATALOGUE.filter(
+          (r) =>
+            r.label.toLowerCase().includes(q) ||
+            r.type.toLowerCase().includes(q) ||
+            r.description.toLowerCase().includes(q) ||
+            r.category.toLowerCase().includes(q)
+        );
+    return [...matching].sort(
+      (a, b) => resourceTypeBuildOrder(a.type) - resourceTypeBuildOrder(b.type)
     );
   }, [query]);
 
@@ -83,13 +88,17 @@ export function Catalogue({
         />
       </div>
       <div className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-0">
-        {categories.map((cat) => {
-          const items = filtered.filter((r) => r.category === cat);
+        {RESOURCE_BUILD_STAGES.map((stage, stageIndex) => {
+          const items = filtered.filter(
+            (r) => resourceBuildStageForType(r.type)?.id === stage.id
+          );
           if (items.length === 0) return null;
           return (
-            <div key={cat}>
+            <div key={stage.id}>
               <div className="sticky top-0 bg-white dark:bg-slate-900 py-1 mb-1">
-                <Badge tone="violet">{cat}</Badge>
+                <Badge tone="violet">
+                  {stageIndex + 1}. {stage.label}
+                </Badge>
               </div>
               <ul className="space-y-1">
                 {items.map((r) => (
@@ -110,7 +119,7 @@ export function Catalogue({
                             {r.label}
                           </div>
                           <div className="text-[11px] text-slate-400 truncate">
-                            {r.description}
+                            {r.description} - {r.category}
                           </div>
                         </div>
                         <span
