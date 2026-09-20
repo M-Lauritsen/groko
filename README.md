@@ -99,6 +99,7 @@ Edit `environments/backend.*.hcl` (`storage_account_name`, etc.) and fill `CHANG
 - **Undo / Redo** — header and resource-list controls, plus `Cmd/Ctrl+Z` and `Shift+Cmd/Ctrl+Z` (or `Ctrl+Y`). History keeps ~40 snapshots of resources + selection + **environments/scopes** + **exportConfig** (folder map overrides); value typing is debounced (~300ms) so undo is not character-by-character. Snapshots cover add/remove, value edits, use-existing toggles, import merge/replace, starter apply, and environment knob edits.
 - **Starter apply** — empty canvas applies immediately (non-Prod). If resources already exist, a confirm offers **Replace all**, **Merge with starter**, or **Cancel** (no silent wipe).
 - **Prod friction** (Develops #1) — when the active **Environment** is Prod (`id === "prod"`, displayName Prod/Production, or knobs tag `Environment=prod|production`), destructive apply needs an extra confirm: starter apply (even on an empty canvas), and Import **Replace all** / **Merge**. Dialog title *This Environment is Production*; primary **Replace on Prod** (danger); Esc cancels; Tier badge shown. Dev/Staging unchanged.
+- **Domain invariants** (`npm run test:invariants`, also in `npm test`) — regression locks for: shared vs env-scoped visibility/`canReference`; cross-env refs rejected (pickers + graph `valid:false`); orphan ZIP download blocked until Leave unmapped confirm; Prod starter/import Replace|Merge cannot be silently skipped; export folder-map golden (stable file keys + critical HCL markers).
 - **Stronger empty states** (Develops #3) — when List/Graph have no visible resources (Shared + active Environment), a headed empty state explains next steps in domain language (no `.tf` / Terraform jargon). Primary CTA **Add from catalogue** (List focuses the catalogue search; Graph opens the catalogue drawer). Secondary link **Import existing** returns to the Environment step. Tier badge stays visible. No new catalogue types.
 
 ## Architecture
@@ -109,7 +110,7 @@ src/lib/generate/   # HCL emitters, module grouping, export folder map, ZIP
 src/lib/import/     # Client-side HCL parse → ResourceInstance[]
 src/lib/store/      # React project state + undo history + starter apply
 src/components/     # Environment / catalogue / forms / dependency graph / export
-scripts/test-generate.ts · test-export-map.ts · test-history.ts · test-graph-layout.ts · test-prod-friction.ts · test-empty-resources.ts
+scripts/test-invariants.ts · test-generate.ts · test-export-map.ts · test-history.ts · test-graph-layout.ts · test-prod-friction.ts · test-empty-resources.ts
 ```
 
 ## Catalogue highlights
