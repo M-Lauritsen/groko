@@ -3,22 +3,26 @@ import {
   type ResourceInstance,
   type FieldDef,
   type ReferenceValue,
+  type ContainerEnvVar,
+  type ContainerAppSecret,
+  type Environment,
   isReferenceValue,
   TERRAFORM_VERSION,
   AZURERM_VERSION,
 } from "../schema/types";
+import { defaultEnvironments } from "../schema/environments";
 import { getResourceType } from "../schema/resources";
 import {
   MODULE_DEFS,
-  partitionByModule,
   moduleOrder,
-  createModuleOfMap,
   resolveModularRef,
   outputName,
   envTags,
   type ModularRefContext,
   type CrossModuleInput,
 } from "./modules";
+import { resolveExportMap } from "./export-map";
+import type { ExportConfig } from "../schema/types";
 
 function escapeHclString(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -154,6 +158,21 @@ function emitFieldValue(
     return null;
   }
 
+  // Function App: nested site_config / storage / identity / App Insights handled specially
+  if (
+    resource.type === "azurerm_linux_function_app" &&
+    [
+      "storage_account_id",
+      "runtime_stack",
+      "runtime_version",
+      "identity_type",
+      "user_assigned_identity_id",
+      "application_insights_id",
+    ].includes(field.key)
+  ) {
+    return null;
+  }
+
   // Skip NIC public IP / subnet — handled in ip_configuration
   if (
     resource.type === "azurerm_network_interface" &&
@@ -185,6 +204,20 @@ function emitFieldValue(
       field.key === "internal_load_balancer_enabled" ||
       field.key === "zone_redundancy_enabled"
     )
+  ) {
+    return null;
+  }
+
+  // Private Endpoint: nested PSC + DNS zone group handled specially
+  if (
+    resource.type === "azurerm_private_endpoint" &&
+    [
+      "private_connection_resource_id",
+      "subresource_names",
+      "private_connection_name",
+      "is_manual_connection",
+      "private_dns_zone_id",
+    ].includes(field.key)
   ) {
     return null;
   }
@@ -382,7 +415,98 @@ function emitWebAppBlock(
   return lines.join("\n");
 }
 
+function emitFunctionAppBlock(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const v = resource.values;
+  const def = getResourceType(resource.type)!;
+  const lines: string[] = [];
 
+  for (const field of def.fields) {
+    if (
+      [
+        "storage_account_id",
+        "runtime_stack",
+        "runtime_version",
+        "identity_type",
+        "user_assigned_identity_id",
+        "application_insights_id",
+      ].includes(field.key)
+    ) {
+      continue;
+    }
+    const line = emitFieldValue(
+      field,
+      v[field.key],
+      resource,
+      resources,
+      sensitiveVars
+    );
+    if (line) lines.push(line);
+  }
+
+  // Storage: one catalogue pick → name + access key (azurerm 4.x)
+  const stRef = v.storage_account_id;
+  if (isReferenceValue(stRef)) {
+    lines.push(
+      `  storage_account_name       = ${resolveRef({ resourceId: stRef.resourceId, attr: "name" }, resources)}`
+    );
+    lines.push(
+      `  storage_account_access_key = ${resolveRef({ resourceId: stRef.resourceId, attr: "primary_access_key" }, resources)}`
+    );
+  } else if (typeof stRef === "string" && stRef) {
+    lines.push(`  storage_account_name = ${formatString(stRef)}`);
+    lines.push(
+      `  # TODO: set storage_account_access_key when storage is not a catalogue reference`
+    );
+  }
+
+  const stack = String(v.runtime_stack ?? "node");
+  const ver = String(v.runtime_version ?? "");
+  let stackInner = "";
+  if (stack === "python") {
+    stackInner = `      python_version = ${formatString(ver || "3.11")}`;
+  } else if (stack === "dotnet") {
+    stackInner = `      dotnet_version = ${formatString(ver || "8.0")}`;
+  } else {
+    stackInner = `      node_version = ${formatString(ver || "20")}`;
+  }
+  lines.push(`  site_config {
+    application_stack {
+${stackInner}
+    }
+  }`);
+
+  const identityType = String(v.identity_type ?? "None");
+  const uaiRef = v.user_assigned_identity_id;
+  if (identityType && identityType !== "None") {
+    if (identityType === "UserAssigned" && isReferenceValue(uaiRef)) {
+      lines.push(`  identity {
+    type         = ${formatString(identityType)}
+    identity_ids = [${resolveRef(uaiRef, resources)}]
+  }`);
+    } else if (identityType === "SystemAssigned") {
+      lines.push(`  identity {
+    type = "SystemAssigned"
+  }`);
+    }
+  }
+
+  // App Insights: catalogue pick → connection string (+ instrumentation key) azurerm 4.x
+  const aiRef = v.application_insights_id;
+  if (isReferenceValue(aiRef)) {
+    lines.push(
+      `  application_insights_connection_string = ${resolveRef({ resourceId: aiRef.resourceId, attr: "connection_string" }, resources)}`
+    );
+    lines.push(
+      `  application_insights_key               = ${resolveRef({ resourceId: aiRef.resourceId, attr: "instrumentation_key" }, resources)}`
+    );
+  }
+
+  return lines.join("\n");
+}
 
 /** True if image already includes a registry host (do not prefix ACR login_server). */
 function isFullyQualifiedContainerImage(image: string): boolean {
@@ -471,6 +595,153 @@ function resolveAcrAttr(
   return `${prefix}.${attr}`;
 }
 
+function parseEnvVars(raw: unknown): ContainerEnvVar[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null)
+    .map((e) => ({
+      name: String(e.name ?? ""),
+      value: e.value !== undefined ? String(e.value) : undefined,
+      secret_name:
+        e.secret_name !== undefined ? String(e.secret_name) : undefined,
+    }))
+    .filter((e) => e.name.trim() !== "");
+}
+
+function parseAppSecrets(raw: unknown): ContainerAppSecret[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null)
+    .map((e) => {
+      const source = e.source === "key_vault" ? "key_vault" : "value";
+      const item: ContainerAppSecret = {
+        name: String(e.name ?? ""),
+        source,
+      };
+      if (e.value !== undefined) item.value = String(e.value);
+      if (e.secret_name !== undefined) item.secret_name = String(e.secret_name);
+      if (isReferenceValue(e.key_vault_id)) item.key_vault_id = e.key_vault_id;
+      return item;
+    })
+    .filter((e) => e.name.trim() !== "");
+}
+
+function emitContainerAppSecrets(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"],
+  secrets: ContainerAppSecret[],
+  uaiRef: unknown
+): string[] {
+  const lines: string[] = [];
+  for (const sec of secrets) {
+    if (sec.source === "key_vault") {
+      if (!isReferenceValue(sec.key_vault_id) || !sec.secret_name) continue;
+      const vaultUri = resolveRef(
+        { resourceId: sec.key_vault_id.resourceId, attr: "vault_uri" },
+        resources
+      );
+      const secretName = escapeHclString(sec.secret_name);
+      let block = `  secret {
+    name                = ${formatString(sec.name)}
+    key_vault_secret_id = "\${${vaultUri}}secrets/${secretName}"`;
+      if (isReferenceValue(uaiRef)) {
+        block += `
+    identity            = ${resolveRef(uaiRef, resources)}`;
+      }
+      block += `
+  }`;
+      lines.push(block);
+    } else {
+      const varName = sensitiveVarName(resource, `secret_${sec.name}`);
+      sensitiveVars.push({
+        name: varName,
+        description: `Container App secret "${sec.name}" for ${resource.type}.${resource.tfName}`,
+        resourceLabel: `Container App.${resource.tfName}`,
+      });
+      lines.push(`  secret {
+    name  = ${formatString(sec.name)}
+    value = var.${varName}
+  }`);
+    }
+  }
+  return lines;
+}
+
+function emitContainerEnvBlocks(envVars: ContainerEnvVar[]): string {
+  if (envVars.length === 0) return "";
+  const parts: string[] = [];
+  for (const ev of envVars) {
+    if (ev.secret_name) {
+      parts.push(`      env {
+        name        = ${formatString(ev.name)}
+        secret_name = ${formatString(ev.secret_name)}
+      }`);
+    } else {
+      parts.push(`      env {
+        name  = ${formatString(ev.name)}
+        value = ${formatString(ev.value ?? "")}
+      }`);
+    }
+  }
+  return "\n" + parts.join("\n");
+}
+
+/** Emit Key Vault Secrets User role assignments when MI + KV secrets are used. */
+function emitKvSecretsUserAssignments(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  secrets: ContainerAppSecret[],
+  uaiRef: unknown
+): string {
+  if (!isReferenceValue(uaiRef)) return "";
+  const kvIds = new Set<string>();
+  for (const sec of secrets) {
+    if (sec.source === "key_vault" && isReferenceValue(sec.key_vault_id)) {
+      kvIds.add(sec.key_vault_id.resourceId);
+    }
+  }
+  if (kvIds.size === 0) return "";
+
+  const uai = resources.find((r) => r.id === uaiRef.resourceId);
+  if (!uai) return "";
+
+  const blocks: string[] = [];
+  for (const kvId of kvIds) {
+    const already = resources.some(
+      (r) =>
+        r.type === "azurerm_role_assignment" &&
+        !r.useExisting &&
+        String(r.values.role_definition_name ?? "") ===
+          "Key Vault Secrets User" &&
+        isReferenceValue(r.values.scope) &&
+        (r.values.scope as ReferenceValue).resourceId === kvId &&
+        isReferenceValue(r.values.principal_id) &&
+        (r.values.principal_id as ReferenceValue).resourceId === uai.id
+    );
+    if (already) continue;
+
+    const kv = resources.find((r) => r.id === kvId);
+    if (!kv) continue;
+    const tfSafe = `${resource.tfName}_kv_${kv.tfName}_secrets_user`.replace(
+      /[^a-zA-Z0-9_]/g,
+      "_"
+    );
+    const scopeExpr = resolveRef({ resourceId: kvId, attr: "id" }, resources);
+    const principalExpr = resolveRef(
+      { resourceId: uai.id, attr: "principal_id" },
+      resources
+    );
+    blocks.push(`resource "azurerm_role_assignment" "${tfSafe}" {
+  scope                = ${scopeExpr}
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = ${principalExpr}
+}
+`);
+  }
+  return blocks.length ? "\n" + blocks.join("\n") : "";
+}
+
 function emitContainerAppBlock(
   resource: ResourceInstance,
   resources: ResourceInstance[],
@@ -504,6 +775,8 @@ function emitContainerAppBlock(
   const authMode = String(v.acr_auth_mode ?? "managed_identity");
   const identityType = String(v.identity_type ?? "UserAssigned");
   const uaiRef = v.user_assigned_identity_id;
+  const appSecrets = parseAppSecrets(v.app_secrets);
+  const envVars = parseEnvVars(v.env_vars);
 
   if (identityType && identityType !== "None") {
     if (identityType.includes("UserAssigned") && isReferenceValue(uaiRef)) {
@@ -517,6 +790,16 @@ function emitContainerAppBlock(
   }`);
     }
   }
+
+  lines.push(
+    ...emitContainerAppSecrets(
+      resource,
+      resources,
+      sensitiveVars,
+      appSecrets,
+      uaiRef
+    )
+  );
 
   if (loginServer) {
     if (authMode === "admin") {
@@ -584,15 +867,27 @@ function emitContainerAppBlock(
     ? "var.ca_max_replicas"
     : String(Number(v.max_replicas ?? 10));
 
+  const envHcl = emitContainerEnvBlocks(envVars);
+
+  let scaleRule = "";
+  if (v.http_scale_enabled) {
+    const concurrent = String(Number(v.http_concurrent_requests ?? 10));
+    scaleRule = `
+    http_scale_rule {
+      name                = "http"
+      concurrent_requests = ${formatString(concurrent)}
+    }`;
+  }
+
   lines.push(`  template {
     min_replicas = ${minExpr}
     max_replicas = ${maxExpr}
-
+${scaleRule}
     container {
       name   = ${formatString(cname)}
       image  = ${imageHcl}
       cpu    = ${cpuExpr}
-      memory = ${memExpr}
+      memory = ${memExpr}${envHcl}
     }
   }`);
 
@@ -628,6 +923,7 @@ function emitContainerAppBlock(
   return lines.join("\n");
 }
 
+
 function emitSubnetBlock(
   resource: ResourceInstance,
   resources: ResourceInstance[],
@@ -659,6 +955,71 @@ function emitSubnetBlock(
   return lines.join("\n");
 }
 
+function emitPrivateEndpointBlock(
+  resource: ResourceInstance,
+  resources: ResourceInstance[],
+  sensitiveVars: GenerateResult["sensitiveVars"]
+): string {
+  const v = resource.values;
+  const def = getResourceType(resource.type)!;
+  const lines: string[] = [];
+  const nestedKeys = new Set([
+    "private_connection_resource_id",
+    "subresource_names",
+    "private_connection_name",
+    "is_manual_connection",
+    "private_dns_zone_id",
+  ]);
+  for (const field of def.fields) {
+    if (nestedKeys.has(field.key)) continue;
+    const line = emitFieldValue(
+      field,
+      v[field.key],
+      resource,
+      resources,
+      sensitiveVars
+    );
+    if (line) lines.push(line);
+  }
+
+  const connName =
+    typeof v.private_connection_name === "string" && v.private_connection_name
+      ? v.private_connection_name
+      : `psc-${resource.tfName}`;
+  const subresource =
+    typeof v.subresource_names === "string" && v.subresource_names
+      ? v.subresource_names
+      : "registry";
+  const target = v.private_connection_resource_id;
+  const targetExpr = isReferenceValue(target)
+    ? resolveRef(target, resources)
+    : typeof target === "string" && target
+      ? formatString(target)
+      : '"TODO_PRIVATE_CONNECTION_RESOURCE_ID"';
+  const manual = v.is_manual_connection ? "true" : "false";
+
+  lines.push(`  private_service_connection {
+    name                           = ${formatString(connName)}
+    private_connection_resource_id = ${targetExpr}
+    is_manual_connection           = ${manual}
+    subresource_names              = [${formatString(subresource)}]
+  }`);
+
+  const dnsZone = v.private_dns_zone_id;
+  if (dnsZone && (isReferenceValue(dnsZone) || (typeof dnsZone === "string" && dnsZone))) {
+    const zoneExpr = isReferenceValue(dnsZone)
+      ? resolveRef(dnsZone, resources)
+      : formatString(String(dnsZone));
+    lines.push(`  private_dns_zone_group {
+    name                 = "default"
+    private_dns_zone_ids = [${zoneExpr}]
+  }`);
+  }
+
+  return lines.join("\n");
+}
+
+
 export function emitResourceBlock(
   resource: ResourceInstance,
   resources: ResourceInstance[],
@@ -678,12 +1039,16 @@ export function emitResourceBlock(
     body = emitNicBlock(resource, resources, sensitiveVars);
   } else if (resource.type === "azurerm_linux_web_app") {
     body = emitWebAppBlock(resource, resources, sensitiveVars);
+  } else if (resource.type === "azurerm_linux_function_app") {
+    body = emitFunctionAppBlock(resource, resources, sensitiveVars);
   } else if (resource.type === "azurerm_container_app_environment") {
     body = emitContainerAppEnvBlock(resource, resources, sensitiveVars);
   } else if (resource.type === "azurerm_container_app") {
     body = emitContainerAppBlock(resource, resources, sensitiveVars);
   } else if (resource.type === "azurerm_subnet") {
     body = emitSubnetBlock(resource, resources, sensitiveVars);
+  } else if (resource.type === "azurerm_private_endpoint") {
+    body = emitPrivateEndpointBlock(resource, resources, sensitiveVars);
   } else {
     const lines: string[] = [];
     for (const field of def.fields) {
@@ -715,7 +1080,17 @@ export function emitResourceBlock(
     }
   }
 
-  return `resource "${resource.type}" "${resource.tfName}" {\n${body}\n}\n`;
+  const main = `resource "${resource.type}" "${resource.tfName}" {\n${body}\n}\n`;
+  if (resource.type === "azurerm_container_app") {
+    const extras = emitKvSecretsUserAssignments(
+      resource,
+      resources,
+      parseAppSecrets(resource.values.app_secrets),
+      resource.values.user_assigned_identity_id
+    );
+    return main + extras;
+  }
+  return main;
 }
 
 function emitDataBlock(resource: ResourceInstance, fields: FieldDef[]): string {
@@ -742,6 +1117,9 @@ function moduleLabel(id: string): string {
 function attrsToExport(r: ResourceInstance): string[] {
   const def = getResourceType(r.type);
   const attrs = new Set<string>(def?.outputs ?? ["id", "name"]);
+  if (r.type === "azurerm_storage_account") {
+    attrs.add("primary_access_key");
+  }
   if (r.type === "azurerm_container_registry") {
     attrs.add("login_server");
     attrs.add("admin_username");
@@ -750,6 +1128,13 @@ function attrsToExport(r: ResourceInstance): string[] {
   if (r.type === "azurerm_user_assigned_identity") {
     attrs.add("principal_id");
     attrs.add("client_id");
+  }
+  if (r.type === "azurerm_key_vault") {
+    attrs.add("vault_uri");
+  }
+  if (r.type === "azurerm_application_insights") {
+    attrs.add("connection_string");
+    attrs.add("instrumentation_key");
   }
   return Array.from(attrs);
 }
@@ -763,11 +1148,16 @@ function sortResources(resources: ResourceInstance[]): ResourceInstance[] {
     "azurerm_subnet_network_security_group_association",
     "azurerm_public_ip",
     "azurerm_network_interface",
+    "azurerm_private_dns_zone",
+    "azurerm_private_dns_zone_virtual_network_link",
+    "azurerm_private_endpoint",
     "azurerm_linux_virtual_machine",
     "azurerm_storage_account",
     "azurerm_key_vault",
     "azurerm_service_plan",
     "azurerm_linux_web_app",
+    "azurerm_linux_function_app",
+    "azurerm_application_insights",
     "azurerm_mssql_server",
     "azurerm_mssql_database",
     "azurerm_container_registry",
@@ -919,68 +1309,36 @@ function formatTagsHcl(tags: Record<string, string>): string {
 
 function generateEnvTfvars(
   config: ProjectConfig,
-  env: string,
+  env: Environment,
   sensitiveVars: GenerateResult["sensitiveVars"]
 ): string {
-  const tags = envTags(config, env);
-  const prefix =
-    env === "dev"
-      ? `${config.namingPrefix}-dev`
-      : env === "staging"
-        ? `${config.namingPrefix}-stg`
-        : `${config.namingPrefix}-prd`;
-
-  const knobs =
-    env === "dev"
-      ? {
-          acr_sku: "Basic",
-          ca_cpu: "0.25",
-          ca_memory: "0.5Gi",
-          ca_min_replicas: "0",
-          ca_max_replicas: "2",
-          ca_ingress_external: "true",
-        }
-      : env === "staging"
-        ? {
-            acr_sku: "Standard",
-            ca_cpu: "0.5",
-            ca_memory: "1Gi",
-            ca_min_replicas: "1",
-            ca_max_replicas: "5",
-            ca_ingress_external: "true",
-          }
-        : {
-            acr_sku: "Premium",
-            ca_cpu: "1.0",
-            ca_memory: "2Gi",
-            ca_min_replicas: "2",
-            ca_max_replicas: "10",
-            ca_ingress_external: "false",
-          };
+  const k = env.knobs;
+  const tags = envTags(config, env.id, k.tags);
+  const prefix = `${config.namingPrefix}${k.namingSuffix}`;
 
   const lines: string[] = [
-    `# Environment: ${env}`,
-    `# Usage: terraform plan -var-file=environments/${env}.tfvars`,
+    `# Environment: ${env.displayName} (${env.id})`,
+    `# Usage: terraform plan -var-file=environments/${env.id}.tfvars`,
     `# Fill sensitive values before apply. Do not commit real secrets.`,
     ``,
     `project_name  = ${formatString(config.name)}`,
     `location      = ${formatString(config.location)}`,
     `naming_prefix = ${formatString(prefix)}`,
-    `environment   = ${formatString(env)}`,
+    `environment   = ${formatString(env.id)}`,
     `tags = ${formatTagsHcl(tags)}`,
     ``,
-    `# Per-environment sizing`,
-    `acr_sku             = ${formatString(knobs.acr_sku)}`,
-    `ca_cpu              = ${knobs.ca_cpu}`,
-    `ca_memory           = ${formatString(knobs.ca_memory)}`,
-    `ca_min_replicas     = ${knobs.ca_min_replicas}`,
-    `ca_max_replicas     = ${knobs.ca_max_replicas}`,
-    `ca_ingress_external = ${knobs.ca_ingress_external}`,
+    `# Per-environment sizing (from Environment knobs)`,
+    `acr_sku             = ${formatString(k.acrSku)}`,
+    `ca_cpu              = ${k.caCpu}`,
+    `ca_memory           = ${formatString(k.caMemory)}`,
+    `ca_min_replicas     = ${k.caMinReplicas}`,
+    `ca_max_replicas     = ${k.caMaxReplicas}`,
+    `ca_ingress_external = ${k.caIngressExternal ? "true" : "false"}`,
   ];
   for (const sv of sensitiveVars) {
     lines.push(``);
     lines.push(`# ${sv.description}`);
-    lines.push(`${sv.name} = "CHANGE_ME_${env.toUpperCase()}"`);
+    lines.push(`${sv.name} = "CHANGE_ME_${env.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}"`);
   }
   return lines.join("\n") + "\n";
 }
@@ -1008,7 +1366,11 @@ function generateModuleOutputs(moduleResources: ResourceInstance[]): string {
       : `${r.type}.${r.tfName}`;
     for (const attr of attrsToExport(r)) {
       const sensitive =
-        attr === "admin_password" ? "\n  sensitive   = true" : "";
+        attr === "admin_password" ||
+        attr === "connection_string" ||
+        attr === "instrumentation_key"
+          ? "\n  sensitive   = true"
+          : "";
       parts.push(`output "${outputName(r, attr)}" {
   description = "${attr} of ${r.type}.${r.tfName}"
   value       = ${prefix}.${attr}${sensitive}
@@ -1149,7 +1511,12 @@ function generateRootOutputs(
     const resources = partitioned.get(mid) ?? [];
     for (const r of resources) {
       for (const attr of attrsToExport(r)) {
-        if (attr === "admin_password") continue;
+        if (
+          attr === "admin_password" ||
+          attr === "connection_string" ||
+          attr === "instrumentation_key"
+        )
+          continue;
         const out = outputName(r, attr);
         parts.push(`output "${mid}__${out}" {
   description = "${moduleLabel(mid)} / ${r.type}.${r.tfName}.${attr}"
@@ -1281,12 +1648,17 @@ Pass secrets via \`-var-file=environments/<env>.tfvars\` or \`TF_VAR_*\` environ
 
 export function generateProject(
   config: ProjectConfig,
-  resources: ResourceInstance[]
+  resources: ResourceInstance[],
+  environments: Environment[] = defaultEnvironments(),
+  exportConfig?: ExportConfig | null
 ): GenerateResult {
   const sensitiveVars: GenerateResult["sensitiveVars"] = [];
-  const partitioned = partitionByModule(resources);
+  const resolved = resolveExportMap(resources, exportConfig);
+  const partitioned = resolved.byModule;
   const orderedModules = moduleOrder(Array.from(partitioned.keys()));
-  const moduleOf = createModuleOfMap(resources);
+  const moduleOf = resolved.moduleOf;
+  // Orphans (null folder) are excluded from modules. Download ZIP must block or
+  // require explicit “leave unmapped” confirm — never silent drop (see export-map).
 
   const files: GeneratedFiles = {};
   const moduleInputs = new Map<string, CrossModuleInput[]>();
@@ -1348,13 +1720,18 @@ export function generateProject(
   );
   files["outputs.tf"] = generateRootOutputs(orderedModules, partitioned);
 
-  for (const env of ["dev", "staging", "prod"] as const) {
-    files[`environments/${env}.tfvars`] = generateEnvTfvars(
+  const envs =
+    environments.length > 0 ? environments : defaultEnvironments();
+  for (const env of envs) {
+    files[`environments/${env.id}.tfvars`] = generateEnvTfvars(
       config,
       env,
       uniqueSensitive
     );
-    files[`environments/backend.${env}.hcl`] = generateBackendHcl(config, env);
+    files[`environments/backend.${env.id}.hcl`] = generateBackendHcl(
+      config,
+      env.id
+    );
   }
 
   files["README.md"] = generateProjectReadme(
@@ -1369,9 +1746,11 @@ export function generateProject(
 
 export function previewHcl(
   config: ProjectConfig,
-  resources: ResourceInstance[]
+  resources: ResourceInstance[],
+  environments?: Environment[],
+  exportConfig?: ExportConfig | null
 ): string {
-  const { files } = generateProject(config, resources);
+  const { files } = generateProject(config, resources, environments, exportConfig);
   const paths = Object.keys(files).sort((a, b) => {
     const rank = (p: string) => {
       if (!p.includes("/")) return 0;

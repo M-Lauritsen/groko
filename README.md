@@ -1,10 +1,44 @@
-# Azure TF Builder
+# groko
 
-Clickable Next.js app that generates **Azure (azurerm) Terraform** project templates with a modular layout, managed-identity ACR pull, and VNet-integrated Container Apps.
+**groko** builds **Azure Environments** in the browser and emits **azurerm Terraform** as a ZIP at the edge. No auth. Generation and import are entirely client-side.
 
-No auth. Generation is entirely client-side.
+Domain spine (always):
+
+**Environment → Resources → Export**
+
+You model Shared and env-scoped resources (Existing | Create), review what will land in the ZIP, then download. HCL lives only on Import/Export adapters — not in the primary UI.
+
+## Documentation
+
+| Doc | Audience |
+|-----|----------|
+| [User guide](docs/user-guide.md) | Walk Environment → Resources → Export (Import, Review, ZIP) |
+| [UX language](docs/ux.md) | Domain labels, empty states, a11y, what we never show |
+| [Developer guide](docs/developer.md) | Stack, tests, how to add a catalogue type |
+| [Architecture](docs/architecture.md) | Domain vs edge, `exportConfig`, invariants |
+
+README is the front door; deep detail lives in `docs/`.
 
 ## Quick start
+
+### Docker Compose (recommended)
+
+Requires Docker with Compose v2. One service only — the web UI (not an Azure catalogue type).
+
+```bash
+docker compose up --build
+```
+
+Open [http://localhost:3000](http://localhost:3000). Stop with `docker compose down`.
+
+| | |
+|---|---|
+| Port | **3000** |
+| URL | http://localhost:3000 |
+| Start | `docker compose up --build` |
+| Stop | `docker compose down` |
+
+### Local (npm)
 
 ```bash
 npm install
@@ -18,77 +52,24 @@ npm run build
 npm test
 ```
 
-## How export works
+`npm run build` / `npm run start` also work on the host without Docker.
 
-1. **Setup** — name, region, prefix, tags; starters include **ACR + Container Apps** (VNet + MI + AcrPull).
-2. **Resources** — catalogue includes identities, role assignments, ACR, CAE, and multiple container apps.
-3. **ACR auth** — per app: **Managed identity (recommended)** or Admin credentials (lab fallback).
-4. **Export** — modular ZIP:
+## What you do in the app
 
-```
-config.tf                 # versions + provider + partial backend "azurerm" {}
-main.tf                   # module wiring
-variables.tf              # includes acr_sku, ca_cpu/memory/replicas, ingress
-outputs.tf
-environments/
-  dev.tfvars / staging.tfvars / prod.tfvars   # meaningfully different sizing
-  backend.dev.hcl / backend.staging.hcl / backend.prod.hcl
-modules/
-  resource_group/ networking/ identity/ container_registry/ container_apps/ …
-README.md
-```
+1. **Environment** — project name / region / prefix / tags, **Dev | Staging | Prod** tier, starters, and **Import existing** (Upload Terraform). Tier badge stays visible after you leave this step.
+2. **Resources** — catalogue of Azure building blocks. Toggle **List | Graph** (not a fourth main tab). Each instance is **Shared** or scoped to one Environment; forms open with **Existing | Create**.
+3. **Export** — default **Review changes** (domain summary), optional folder map, then **Download ZIP**. Live HCL is secondary.
 
-### Init + plan (remote state)
+Newcomer path: Compose up → set Environment → add or import resources → Review → ZIP. Contributor path: see [how to add a catalogue type](docs/developer.md#how-to-add-a-catalogue-type).
 
-```bash
-# Partial backend in config.tf — pass env-specific details at init:
-terraform init -backend-config=environments/backend.dev.hcl
+## Copilot / agents (in-repo)
 
-terraform plan  -var-file=environments/dev.tfvars
-terraform apply -var-file=environments/dev.tfvars
-```
+The Copilot pack ships **in this repo** under `.github/` (agents, instructions, prompts) plus root `AGENTS.md` / `README-COPILOT.md`.
 
-Switch env:
+**Start with the Orchestrator** (`groko-orchestrator`). It classifies and hands off; specialists implement. Do not treat Compose as a catalogue resource, and do not invent raw `azurerm_*` dumps in UI copy.
 
-```bash
-terraform init -reconfigure -backend-config=environments/backend.prod.hcl
-terraform plan -var-file=environments/prod.tfvars
-```
+## Known gaps (short)
 
-Edit `environments/backend.*.hcl` (`storage_account_name`, etc.) and fill `CHANGE_ME_*` secrets in tfvars.
-
-### Env differences (examples)
-
-| Knob | dev | staging | prod |
-|------|-----|---------|------|
-| `acr_sku` | Basic | Standard | Premium |
-| `ca_cpu` / memory | 0.25 / 0.5Gi | 0.5 / 1Gi | 1.0 / 2Gi |
-| replicas | 0–2 | 1–5 | 2–10 |
-| `ca_ingress_external` | true | true | false |
-| `naming_prefix` | `*-dev` | `*-stg` | `*-prd` |
-
-## Architecture
-
-```
-src/lib/schema/     # ResourceTypeDef catalogue + starters
-src/lib/generate/   # HCL emitters, module grouping, ZIP
-src/lib/store/      # React project state
-src/components/     # Setup / catalogue / forms / export
-scripts/test-generate.ts
-```
-
-## Catalogue highlights
-
-Containers + Identity: `azurerm_container_registry`, `azurerm_user_assigned_identity`, `azurerm_role_assignment` (AcrPull), `azurerm_log_analytics_workspace`, `azurerm_container_app_environment` (optional `infrastructure_subnet_id` + workload profile), `azurerm_container_app` (MI or admin registry auth). Subnets support `Microsoft.App/environments` delegation.
-
-## Known gaps
-
-- Azure only.
-- NSG rules are SSH/HTTP/HTTPS toggles.
-- Key Vault RBAC beyond tenant/RBAC flag is minimal.
-- No Function App resource yet.
-- Container App is single-container (no sidecars/Dapr).
-- ACR private endpoint / private DNS not modeled (CAE VNet integration is).
-- System-assigned identity + AcrPull role assignment is not auto-wired (user-assigned path is).
-- Module boundaries are fixed groupings.
-- No undo/history; starter apply replaces the list.
+- One shared module tree; env differences are tfvars knobs, not duplicated env HCL modules.
+- Azure only; PE covers ACR / Key Vault / SQL; import is best-effort (modules / `for_each` / complex HCL skipped).
+- See [architecture](docs/architecture.md) for invariants and edge boundaries.

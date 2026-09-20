@@ -7,9 +7,11 @@ export type FieldType =
   | "tags"
   | "list"
   | "reference"
-  | "sensitive";
+  | "sensitive"
+  | "env_list"
+  | "secret_list";
 
-export type ReferenceAttr = "id" | "name" | "location" | "resource_group_name" | "login_server" | "admin_username" | "principal_id";
+export type ReferenceAttr = "id" | "name" | "location" | "resource_group_name" | "login_server" | "admin_username" | "principal_id" | "vault_uri" | "primary_access_key" | "connection_string" | "instrumentation_key";
 
 export interface FieldOption {
   value: string;
@@ -50,7 +52,35 @@ export interface ResourceTypeDef {
   outputs: ReferenceAttr[];
   /** Suggested default instance name */
   defaultName: string;
+  /** When true, catalogue add defaults Use existing on (e.g. shared hub Private DNS). */
+  preferUseExisting?: boolean;
 }
+
+/** Per-environment sizing / naming knobs (drive environments/*.tfvars). */
+export interface EnvironmentKnobs {
+  /** Appended to project namingPrefix in tfvars (e.g. "-dev", "-stg", "-prd"). */
+  namingSuffix: string;
+  /** Tags merged into var.tags (typically Environment=…). */
+  tags: Record<string, string>;
+  acrSku: string;
+  caCpu: number;
+  caMemory: string;
+  caMinReplicas: number;
+  caMaxReplicas: number;
+  caIngressExternal: boolean;
+}
+
+/** First-class deploy environment (dev / staging / prod / custom). */
+export interface Environment {
+  id: string;
+  displayName: string;
+  knobs: EnvironmentKnobs;
+}
+
+/** Resource visibility: shared across all envs, or scoped to one environment. */
+export type ResourceScope =
+  | { kind: "shared" }
+  | { kind: "environment"; environmentId: string };
 
 export interface ResourceInstance {
   id: string;
@@ -61,6 +91,13 @@ export interface ResourceInstance {
   values: Record<string, unknown>;
   /** Identifying values when useExisting */
   existingValues: Record<string, unknown>;
+  /** Shared across envs, or visible only in one environment */
+  scope: ResourceScope;
+  /**
+   * Hub DNS / VNet link owner Environment id (Develops #2).
+   * Set at create; Prefer Existing never transfers; change via explicit reassign.
+   */
+  hubOwnerEnvironmentId?: string;
 }
 
 export interface ProjectConfig {
@@ -73,8 +110,14 @@ export interface ProjectConfig {
 
 export interface ProjectState {
   config: ProjectConfig;
+  /** First-class environments (drive tfvars / backend hcl keys). */
+  environments: Environment[];
+  /** Active environment for UI filtering (not an undo concern by itself). */
+  activeEnvironmentId: string;
   resources: ResourceInstance[];
   selectedResourceId: string | null;
+  /** Export folder map overrides (included in undo snapshots). */
+  exportConfig: ExportConfig;
 }
 
 export interface ReferenceValue {
@@ -92,6 +135,24 @@ export function isReferenceValue(v: unknown): v is ReferenceValue {
   );
 }
 
+
+/** Container App environment variable row. */
+export interface ContainerEnvVar {
+  name: string;
+  value?: string;
+  secret_name?: string;
+}
+
+/** Container App secret: plain value (sensitive var) or Key Vault reference. */
+export interface ContainerAppSecret {
+  name: string;
+  source: "value" | "key_vault";
+  value?: string;
+  key_vault_id?: ReferenceValue;
+  /** Key Vault secret name (not the Container App secret name). */
+  secret_name?: string;
+}
+
 export const AZURE_LOCATIONS: FieldOption[] = [
   { value: "westeurope", label: "West Europe" },
   { value: "northeurope", label: "North Europe" },
@@ -105,3 +166,18 @@ export const AZURE_LOCATIONS: FieldOption[] = [
 
 export const TERRAFORM_VERSION = ">= 1.5.0, < 2.0.0";
 export const AZURERM_VERSION = "~> 4.0";
+
+/** One exporter config — domain→folder map for ZIP layout (not free-form HCL). */
+export interface ExportConfig {
+  /**
+   * Per-resource module folder override.
+   * - missing key → default from MODULE_DEFS / moduleIdForType
+   * - string → modules/<id>/
+   * - null → orphan (no folder); flagged in Map mode before download
+   */
+  moduleByResourceId: Record<string, string | null>;
+}
+
+export function defaultExportConfig(): ExportConfig {
+  return { moduleByResourceId: {} };
+}

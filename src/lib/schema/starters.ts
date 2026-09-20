@@ -1,4 +1,5 @@
 import type { ProjectConfig, ResourceInstance } from "./types";
+import { envScope, sharedScope } from "./environments";
 
 export interface StarterTemplate {
   id: string;
@@ -57,6 +58,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: planId,
@@ -72,6 +74,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
         {
           id: appId,
@@ -88,6 +91,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
         {
           id: sqlId,
@@ -105,6 +109,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
         {
           id: dbId,
@@ -120,19 +125,23 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
       ];
     },
   },
   {
     id: "storage-function",
-    label: "Storage + Function Plan",
-    description: "Resource group, storage account, and App Service plan (Y1 consumption)",
+    label: "Storage + Function App",
+    description:
+      "Shared RG + storage, Y1 Consumption plan + Linux Function App (Node 20) + Application Insights scoped to dev",
     icon: "⚡",
     build: (config, makeId) => {
       const rgId = makeId();
       const stId = makeId();
       const planId = makeId();
+      const aiId = makeId();
+      const funcId = makeId();
       const p = config.namingPrefix;
       return [
         {
@@ -146,6 +155,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: stId,
@@ -163,6 +173,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: planId,
@@ -178,6 +189,45 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
+        },
+        {
+          id: aiId,
+          type: "azurerm_application_insights",
+          tfName: "func",
+          useExisting: false,
+          values: {
+            name: named(p, "appi"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            application_type: "web",
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: envScope("dev"),
+        },
+        {
+          id: funcId,
+          type: "azurerm_linux_function_app",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "func"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            service_plan_id: { resourceId: planId, attr: "id" },
+            storage_account_id: { resourceId: stId, attr: "id" },
+            application_insights_id: { resourceId: aiId, attr: "id" },
+            runtime_stack: "node",
+            runtime_version: "20",
+            https_only: true,
+            public_network_access_enabled: true,
+            app_settings: {},
+            identity_type: "None",
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: envScope("dev"),
         },
       ];
     },
@@ -209,6 +259,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: vnetId,
@@ -223,6 +274,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: subnetId,
@@ -236,6 +288,7 @@ export const STARTERS: StarterTemplate[] = [
             address_prefixes: ["10.0.1.0/24"],
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: nsgId,
@@ -252,6 +305,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: assocId,
@@ -263,6 +317,7 @@ export const STARTERS: StarterTemplate[] = [
             network_security_group_id: { resourceId: nsgId, attr: "id" },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: pipId,
@@ -278,6 +333,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: nicId,
@@ -293,6 +349,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: vmId,
@@ -316,6 +373,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
       ];
     },
@@ -324,7 +382,7 @@ export const STARTERS: StarterTemplate[] = [
     id: "acr-container-apps",
     label: "ACR + Container Apps",
     description:
-      "RG, VNet + CAE subnet, ACR, managed identity + AcrPull, Log Analytics, VNet-integrated CAE, and a sample Container App",
+      "Shared foundation (RG, VNet, ACR, MI, KV, LAW, CAE) + a Container App scoped to the dev environment (duplicate for staging/prod as needed)",
     icon: "🐳",
     build: (config, makeId) => {
       const rgId = makeId();
@@ -333,6 +391,8 @@ export const STARTERS: StarterTemplate[] = [
       const acrId = makeId();
       const uaiId = makeId();
       const roleId = makeId();
+      const kvId = makeId();
+      const roleKvId = makeId();
       const lawId = makeId();
       const envId = makeId();
       const appId = makeId();
@@ -349,6 +409,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: vnetId,
@@ -364,6 +425,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: subnetId,
@@ -379,6 +441,7 @@ export const STARTERS: StarterTemplate[] = [
             delegation: "Microsoft.App/environments",
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: acrId,
@@ -395,6 +458,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: uaiId,
@@ -408,6 +472,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: roleId,
@@ -420,6 +485,38 @@ export const STARTERS: StarterTemplate[] = [
             principal_id: { resourceId: uaiId, attr: "principal_id" },
           },
           existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: kvId,
+          type: "azurerm_key_vault",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "kv"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            sku_name: "standard",
+            soft_delete_retention_days: 7,
+            purge_protection_enabled: false,
+            enable_rbac_authorization: true,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: roleKvId,
+          type: "azurerm_role_assignment",
+          tfName: "kv_secrets_user",
+          useExisting: false,
+          values: {
+            scope: { resourceId: kvId, attr: "id" },
+            role_definition_name: "Key Vault Secrets User",
+            principal_id: { resourceId: uaiId, attr: "principal_id" },
+          },
+          existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: lawId,
@@ -435,6 +532,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: envId,
@@ -452,6 +550,7 @@ export const STARTERS: StarterTemplate[] = [
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: sharedScope(),
         },
         {
           id: appId,
@@ -476,13 +575,458 @@ export const STARTERS: StarterTemplate[] = [
             acr_auth_mode: "managed_identity",
             identity_type: "UserAssigned",
             user_assigned_identity_id: { resourceId: uaiId, attr: "id" },
+            env_vars: [
+              { name: "ASPNETCORE_ENVIRONMENT", value: "Production" },
+              { name: "DB_PASSWORD", secret_name: "db-password" },
+            ],
+            app_secrets: [
+              {
+                name: "db-password",
+                source: "key_vault",
+                key_vault_id: { resourceId: kvId, attr: "id" },
+                secret_name: "db-password",
+              },
+            ],
+            http_scale_enabled: true,
+            http_concurrent_requests: 10,
             tags: { ...config.tags },
           },
           existingValues: {},
+          scope: envScope("dev"),
         },
       ];
     },
   },
+
+  {
+    id: "private-acr",
+    label: "Private ACR",
+    description:
+      "Shared VNet + PE subnet + Premium ACR (public access off) + private endpoint + hub Private DNS (Use existing) + VNet link + MI/AcrPull. Optional CAE/app not included — add from catalogue or merge with ACR + Container Apps.",
+    icon: "🔐",
+    build: (config, makeId) => {
+      const rgId = makeId();
+      const vnetId = makeId();
+      const peSubnetId = makeId();
+      const acrId = makeId();
+      const dnsId = makeId();
+      const linkId = makeId();
+      const peId = makeId();
+      const uaiId = makeId();
+      const roleId = makeId();
+      const p = config.namingPrefix;
+      return [
+        {
+          id: rgId,
+          type: "azurerm_resource_group",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "rg"),
+            location: config.location,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: vnetId,
+          type: "azurerm_virtual_network",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "vnet"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            address_space: ["10.0.0.0/16"],
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: peSubnetId,
+          type: "azurerm_subnet",
+          tfName: "private_endpoints",
+          useExisting: false,
+          values: {
+            name: "snet-pe",
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            virtual_network_name: { resourceId: vnetId, attr: "name" },
+            address_prefixes: ["10.0.8.0/24"],
+            delegation: "",
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: acrId,
+          type: "azurerm_container_registry",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: acrName(p),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            sku: "Premium",
+            admin_enabled: false,
+            public_network_access_enabled: false,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: dnsId,
+          type: "azurerm_private_dns_zone",
+          tfName: "acr",
+          useExisting: true,
+          values: {
+            name: "privatelink.azurecr.io",
+            resource_group_name: "rg-hub-dns",
+            tags: { ...config.tags },
+          },
+          existingValues: {
+            name: "privatelink.azurecr.io",
+            resource_group_name: "rg-hub-dns",
+          },
+          scope: sharedScope(),
+        },
+        {
+          id: linkId,
+          type: "azurerm_private_dns_zone_virtual_network_link",
+          tfName: "acr",
+          useExisting: false,
+          values: {
+            name: named(p, "dns-link-acr"),
+            resource_group_name: "rg-hub-dns",
+            private_dns_zone_name: { resourceId: dnsId, attr: "name" },
+            virtual_network_id: { resourceId: vnetId, attr: "id" },
+            registration_enabled: false,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: peId,
+          type: "azurerm_private_endpoint",
+          tfName: "acr",
+          useExisting: false,
+          values: {
+            name: named(p, "pe-acr"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            subnet_id: { resourceId: peSubnetId, attr: "id" },
+            private_connection_resource_id: { resourceId: acrId, attr: "id" },
+            subresource_names: "registry",
+            private_connection_name: "psc-acr",
+            is_manual_connection: false,
+            private_dns_zone_id: { resourceId: dnsId, attr: "id" },
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: uaiId,
+          type: "azurerm_user_assigned_identity",
+          tfName: "acrpull",
+          useExisting: false,
+          values: {
+            name: named(p, "id-acrpull"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: roleId,
+          type: "azurerm_role_assignment",
+          tfName: "acr_pull",
+          useExisting: false,
+          values: {
+            scope: { resourceId: acrId, attr: "id" },
+            role_definition_name: "AcrPull",
+            principal_id: { resourceId: uaiId, attr: "principal_id" },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+      ];
+    },
+  },
+
+  {
+    id: "private-key-vault",
+    label: "Private Key Vault",
+    description:
+      "Shared VNet + PE subnet + Key Vault (public access off) + private endpoint (vault) + hub Private DNS (Use existing) + VNet link. Same private_networking pattern as Private ACR.",
+    icon: "🔐",
+    build: (config, makeId) => {
+      const rgId = makeId();
+      const vnetId = makeId();
+      const peSubnetId = makeId();
+      const kvId = makeId();
+      const dnsId = makeId();
+      const linkId = makeId();
+      const peId = makeId();
+      const p = config.namingPrefix;
+      return [
+        {
+          id: rgId,
+          type: "azurerm_resource_group",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "rg"),
+            location: config.location,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: vnetId,
+          type: "azurerm_virtual_network",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "vnet"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            address_space: ["10.0.0.0/16"],
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: peSubnetId,
+          type: "azurerm_subnet",
+          tfName: "private_endpoints",
+          useExisting: false,
+          values: {
+            name: "snet-pe",
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            virtual_network_name: { resourceId: vnetId, attr: "name" },
+            address_prefixes: ["10.0.8.0/24"],
+            delegation: "",
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: kvId,
+          type: "azurerm_key_vault",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "kv"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            sku_name: "standard",
+            soft_delete_retention_days: 7,
+            purge_protection_enabled: false,
+            enable_rbac_authorization: true,
+            public_network_access_enabled: false,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: dnsId,
+          type: "azurerm_private_dns_zone",
+          tfName: "kv",
+          useExisting: true,
+          values: {
+            name: "privatelink.vaultcore.azure.net",
+            resource_group_name: "rg-hub-dns",
+            tags: { ...config.tags },
+          },
+          existingValues: {
+            name: "privatelink.vaultcore.azure.net",
+            resource_group_name: "rg-hub-dns",
+          },
+          scope: sharedScope(),
+        },
+        {
+          id: linkId,
+          type: "azurerm_private_dns_zone_virtual_network_link",
+          tfName: "kv",
+          useExisting: false,
+          values: {
+            name: named(p, "dns-link-kv"),
+            resource_group_name: "rg-hub-dns",
+            private_dns_zone_name: { resourceId: dnsId, attr: "name" },
+            virtual_network_id: { resourceId: vnetId, attr: "id" },
+            registration_enabled: false,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: peId,
+          type: "azurerm_private_endpoint",
+          tfName: "kv",
+          useExisting: false,
+          values: {
+            name: named(p, "pe-kv"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            subnet_id: { resourceId: peSubnetId, attr: "id" },
+            private_connection_resource_id: { resourceId: kvId, attr: "id" },
+            subresource_names: "vault",
+            private_connection_name: "psc-kv",
+            is_manual_connection: false,
+            private_dns_zone_id: { resourceId: dnsId, attr: "id" },
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+      ];
+    },
+  },
+
+  {
+    id: "private-sql",
+    label: "Private SQL",
+    description:
+      "Shared VNet + PE subnet + SQL Server (public access off) + private endpoint (sqlServer) + hub Private DNS (Use existing) + VNet link. Same private_networking pattern as Private ACR.",
+    icon: "🗄️",
+    build: (config, makeId) => {
+      const rgId = makeId();
+      const vnetId = makeId();
+      const peSubnetId = makeId();
+      const sqlId = makeId();
+      const dnsId = makeId();
+      const linkId = makeId();
+      const peId = makeId();
+      const p = config.namingPrefix;
+      return [
+        {
+          id: rgId,
+          type: "azurerm_resource_group",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "rg"),
+            location: config.location,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: vnetId,
+          type: "azurerm_virtual_network",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "vnet"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            address_space: ["10.0.0.0/16"],
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: peSubnetId,
+          type: "azurerm_subnet",
+          tfName: "private_endpoints",
+          useExisting: false,
+          values: {
+            name: "snet-pe",
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            virtual_network_name: { resourceId: vnetId, attr: "name" },
+            address_prefixes: ["10.0.8.0/24"],
+            delegation: "",
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: sqlId,
+          type: "azurerm_mssql_server",
+          tfName: "main",
+          useExisting: false,
+          values: {
+            name: named(p, "sql"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            version: "12.0",
+            administrator_login: "sqladmin",
+            administrator_login_password: "",
+            minimum_tls_version: "1.2",
+            public_network_access_enabled: false,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: dnsId,
+          type: "azurerm_private_dns_zone",
+          tfName: "sql",
+          useExisting: true,
+          values: {
+            name: "privatelink.database.windows.net",
+            resource_group_name: "rg-hub-dns",
+            tags: { ...config.tags },
+          },
+          existingValues: {
+            name: "privatelink.database.windows.net",
+            resource_group_name: "rg-hub-dns",
+          },
+          scope: sharedScope(),
+        },
+        {
+          id: linkId,
+          type: "azurerm_private_dns_zone_virtual_network_link",
+          tfName: "sql",
+          useExisting: false,
+          values: {
+            name: named(p, "dns-link-sql"),
+            resource_group_name: "rg-hub-dns",
+            private_dns_zone_name: { resourceId: dnsId, attr: "name" },
+            virtual_network_id: { resourceId: vnetId, attr: "id" },
+            registration_enabled: false,
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+        {
+          id: peId,
+          type: "azurerm_private_endpoint",
+          tfName: "sql",
+          useExisting: false,
+          values: {
+            name: named(p, "pe-sql"),
+            resource_group_name: { resourceId: rgId, attr: "name" },
+            location: { resourceId: rgId, attr: "location" },
+            subnet_id: { resourceId: peSubnetId, attr: "id" },
+            private_connection_resource_id: { resourceId: sqlId, attr: "id" },
+            subresource_names: "sqlServer",
+            private_connection_name: "psc-sql",
+            is_manual_connection: false,
+            private_dns_zone_id: { resourceId: dnsId, attr: "id" },
+            tags: { ...config.tags },
+          },
+          existingValues: {},
+          scope: sharedScope(),
+        },
+      ];
+    },
+  },
+
 ];
 
 export function getStarter(id: string): StarterTemplate | undefined {

@@ -49,7 +49,12 @@ export const MODULE_DEFS: ModuleDef[] = [
   {
     id: "app_service",
     label: "App Service",
-    types: ["azurerm_service_plan", "azurerm_linux_web_app"],
+    types: [
+      "azurerm_service_plan",
+      "azurerm_linux_web_app",
+      "azurerm_linux_function_app",
+      "azurerm_application_insights",
+    ],
   },
   {
     id: "database",
@@ -60,6 +65,15 @@ export const MODULE_DEFS: ModuleDef[] = [
     id: "container_registry",
     label: "Container Registry",
     types: ["azurerm_container_registry"],
+  },
+  {
+    id: "private_networking",
+    label: "Private Networking",
+    types: [
+      "azurerm_private_dns_zone",
+      "azurerm_private_dns_zone_virtual_network_link",
+      "azurerm_private_endpoint",
+    ],
   },
   {
     id: "identity",
@@ -175,8 +189,20 @@ export function collectRefsFromResources(
     for (const field of def.fields) {
       const val = r.values[field.key];
       if (isReferenceValue(val)) refs.push(val);
+      if (field.key === "app_secrets" && Array.isArray(val)) {
+        for (const item of val) {
+          if (
+            item &&
+            typeof item === "object" &&
+            isReferenceValue((item as Record<string, unknown>).key_vault_id)
+          ) {
+            refs.push(
+              (item as Record<string, unknown>).key_vault_id as ReferenceValue
+            );
+          }
+        }
+      }
     }
-    // Container app ACR ref is also a reference field
   }
   return refs;
 }
@@ -192,10 +218,12 @@ export function moduleOrder(moduleIds: string[]): string[] {
 
 export function envTags(
   config: ProjectConfig,
-  env: string
+  envId: string,
+  envTagsOverride?: Record<string, string>
 ): Record<string, string> {
   return {
     ...config.tags,
-    Environment: env,
+    Environment: envId,
+    ...(envTagsOverride ?? {}),
   };
 }
