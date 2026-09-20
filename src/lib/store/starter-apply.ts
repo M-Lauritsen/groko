@@ -7,6 +7,7 @@ import { mergeImportedResources } from "../import/mapToProject";
 import type { ProjectState } from "../schema/types";
 import { defaultExportConfig } from "../schema/types";
 import { pruneExportConfig } from "../generate/export-map";
+import { withHubOwnerOnCreate } from "./hub-dns-ownership";
 
 export type StarterApplyMode = "replace" | "merge";
 
@@ -32,7 +33,9 @@ export function applyStarterToState(
   if (!starter) return state;
 
   const config = { ...state.config, starter: starterId };
-  const built = starter.build(config, makeId);
+  const built = starter.build(config, makeId).map((r) =>
+    withHubOwnerOnCreate(r, state.activeEnvironmentId)
+  );
 
   if (mode === "replace" || state.resources.length === 0) {
     return {

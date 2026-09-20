@@ -16,6 +16,7 @@ import {
   inferScopeFromName,
   sharedScope,
 } from "../schema/environments";
+import { withHubOwnerOnCreate } from "../store/hub-dns-ownership";
 import type { HclBody, HclValue, ParsedBlock, ParseResult } from "./parse";
 import { isSimpleRef } from "./parse";
 
@@ -481,7 +482,7 @@ export function mapToProject(
         scope = fallback;
       }
     }
-    const instance: ResourceInstance = {
+    let instance: ResourceInstance = {
       id: uid(),
       type: block.type,
       tfName,
@@ -491,6 +492,12 @@ export function mapToProject(
       // Domain scope only — never store raw HCL on the instance
       scope,
     };
+    // Hub DNS / VNet link: stamp owner from scope or first env (Prefer Existing later won't move it)
+    const ownerSeed =
+      scope.kind === "environment"
+        ? scope.environmentId
+        : environments[0]?.id ?? "dev";
+    instance = withHubOwnerOnCreate(instance, ownerSeed);
     pending.push({ block, instance, rawAttrs: block.body.attrs });
   }
 

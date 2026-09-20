@@ -10,6 +10,10 @@ import {
   tierShortLabel,
 } from "@/lib/schema/environments";
 import { getResourceType } from "@/lib/schema/resources";
+import {
+  HUB_OWNERSHIP_COPY,
+  sharedHubZonesReusedByActiveEnv,
+} from "@/lib/store/hub-dns-ownership";
 import type { Environment } from "@/lib/schema/types";
 import {
   Label,
@@ -52,6 +56,15 @@ export function EnvironmentsPanel({
   const shared = visible.filter((r) => normalizeScope(r.scope).kind === "shared");
   const scoped = visible.filter(
     (r) => normalizeScope(r.scope).kind === "environment"
+  );
+  const hubReuse = useMemo(
+    () =>
+      sharedHubZonesReusedByActiveEnv(
+        activeEnvironmentId,
+        resources,
+        environments
+      ),
+    [activeEnvironmentId, resources, environments]
   );
 
   if (!active) {
@@ -269,6 +282,32 @@ export function EnvironmentsPanel({
           </div>
         </div>
       </Card>
+
+      {hubReuse.length > 0 && (
+        <Card className="p-4 border-violet-200 dark:border-violet-800 bg-violet-50/40 dark:bg-violet-950/20">
+          <SectionTitle>Shared hub DNS</SectionTitle>
+          <ul className="space-y-2 mt-1">
+            {hubReuse.map(({ zone, owner }) => {
+              const zoneName =
+                (typeof zone.values.name === "string" && zone.values.name) ||
+                (typeof zone.existingValues.name === "string" &&
+                  zone.existingValues.name) ||
+                zone.tfName;
+              return (
+                <li
+                  key={zone.id}
+                  className="text-sm text-violet-900 dark:text-violet-100"
+                >
+                  {HUB_OWNERSHIP_COPY.envReuseCallout(
+                    owner.displayName,
+                    String(zoneName)
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+      )}
 
       <Card className="p-5">
         <SectionTitle

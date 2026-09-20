@@ -29,7 +29,7 @@ export interface GraphLayout {
 }
 
 const NODE_W = 168;
-const NODE_H = 56;
+const NODE_H = 68;
 const H_GAP = 48;
 const V_GAP = 28;
 const PAD = 32;

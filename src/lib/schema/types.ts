@@ -93,6 +93,11 @@ export interface ResourceInstance {
   existingValues: Record<string, unknown>;
   /** Shared across envs, or visible only in one environment */
   scope: ResourceScope;
+  /**
+   * Hub DNS / VNet link owner Environment id (Develops #2).
+   * Set at create; Prefer Existing never transfers; change via explicit reassign.
+   */
+  hubOwnerEnvironmentId?: string;
 }
 
 export interface ProjectConfig {

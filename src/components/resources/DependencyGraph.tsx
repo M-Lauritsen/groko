@@ -10,6 +10,10 @@ import {
   tierShortLabel,
 } from "@/lib/schema/environments";
 import { layoutDependencyGraph } from "@/lib/generate/graph-layout";
+import {
+  hubOwnershipBadgeText,
+  hubOwnershipGraphSubtitle,
+} from "@/lib/store/hub-dns-ownership";
 import { Card, SectionTitle, Badge, Button } from "@/components/ui/Field";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { UndoRedoControls } from "@/components/history/UndoRedoControls";
@@ -319,6 +323,26 @@ export function DependencyGraph({
                   >
                     .{r.tfName.length > 18 ? r.tfName.slice(0, 17) + "…" : r.tfName}
                   </text>
+                  {(() => {
+                    const sub = hubOwnershipGraphSubtitle(
+                      r,
+                      resources,
+                      environments
+                    );
+                    if (!sub) return null;
+                    const short =
+                      sub.length > 26 ? sub.slice(0, 25) + "…" : sub;
+                    return (
+                      <text
+                        x={12}
+                        y={54}
+                        className="fill-violet-700 dark:fill-violet-300"
+                        style={{ fontSize: 9, fontWeight: 500 }}
+                      >
+                        {short}
+                      </text>
+                    );
+                  })()}
                   {/* Mode badge strip */}
                   <rect
                     x={n.width - 52}
@@ -348,7 +372,8 @@ export function DependencyGraph({
                   <title>
                     {label} .{r.tfName} ·{" "}
                     {r.useExisting ? "Existing" : "Create"} ·{" "}
-                    {scopeLabel(scope, environments)}
+                    {hubOwnershipBadgeText(r, resources, environments) ??
+                      scopeLabel(scope, environments)}
                   </title>
                 </g>
               );

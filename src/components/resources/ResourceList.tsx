@@ -5,6 +5,11 @@ import { useProject } from "@/lib/store/project-context";
 import { getResourceType } from "@/lib/schema/resources";
 import { getUsedBy } from "@/lib/generate/deps";
 import {
+  hubOwnershipBadgeText,
+  isHubDnsType,
+  linkedEnvCountBadge,
+} from "@/lib/store/hub-dns-ownership";
+import {
   normalizeScope,
   resourcesVisibleInEnv,
   scopeLabel,
@@ -141,18 +146,32 @@ export function ResourceList({
                           <Badge tone="emerald">create</Badge>
                         )}
                         <Badge tone={scope.kind === "shared" ? "violet" : "sky"}>
-                          {r.type ===
-                          "azurerm_private_dns_zone_virtual_network_link"
-                            ? scope.kind === "shared"
-                              ? "VNet link · Shared hub"
-                              : `VNet link · ${scopeLabel(scope, environments)}`
+                          {isHubDnsType(r.type)
+                            ? hubOwnershipBadgeText(
+                                r,
+                                resources,
+                                environments
+                              ) ?? scopeLabel(scope, environments)
                             : scopeLabel(scope, environments)}
                         </Badge>
-                        {usedBy.length > 0 && (
-                          <Badge tone="violet">
-                            used by {usedBy.length}
-                          </Badge>
-                        )}
+                        {(() => {
+                          const linked = linkedEnvCountBadge(
+                            r,
+                            resources,
+                            environments
+                          );
+                          if (linked) {
+                            return <Badge tone="violet">{linked}</Badge>;
+                          }
+                          if (usedBy.length > 0 && !isHubDnsType(r.type)) {
+                            return (
+                              <Badge tone="violet">
+                                used by {usedBy.length}
+                              </Badge>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                     </div>
                     <Button

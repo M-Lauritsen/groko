@@ -47,6 +47,10 @@ import {
   applyStarterToState,
   type StarterApplyMode,
 } from "./starter-apply";
+import {
+  reassignHubOwner,
+  withHubOwnerOnCreate,
+} from "./hub-dns-ownership";
 
 function uid(): string {
   return `r_${Math.random().toString(36).slice(2, 10)}`;
@@ -93,6 +97,8 @@ interface ProjectContextValue {
   updateResourceValue: (id: string, key: string, value: unknown) => void;
   updateExistingValue: (id: string, key: string, value: unknown) => void;
   setResourceScope: (id: string, scope: ResourceScope) => void;
+  /** Explicit hub DNS / VNet link owner reassign (Develops #2). */
+  reassignHubOwnerEnvironment: (id: string, environmentId: string) => void;
   removeResource: (id: string) => void;
   selectResource: (id: string | null) => void;
   getUniqueTfName: (type: string, preferred?: string) => string;
@@ -462,15 +468,18 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
-        const instance: ResourceInstance = {
-          id,
-          type,
-          tfName,
-          useExisting,
-          values,
-          existingValues,
-          scope: defaultScopeForNewResource(type, s.activeEnvironmentId),
-        };
+        const instance = withHubOwnerOnCreate(
+          {
+            id,
+            type,
+            tfName,
+            useExisting,
+            values,
+            existingValues,
+            scope: defaultScopeForNewResource(type, s.activeEnvironmentId),
+          },
+          s.activeEnvironmentId
+        );
 
         return {
           ...s,
@@ -538,6 +547,18 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     },
     [commit]
   );
+  const reassignHubOwnerEnvironment = useCallback(
+    (id: string, environmentId: string) => {
+      commit((s) => ({
+        ...s,
+        resources: s.resources.map((r) =>
+          r.id === id ? reassignHubOwner(r, environmentId) : r
+        ),
+      }));
+    },
+    [commit]
+  );
+
 
   const removeResource = useCallback(
     (id: string) => {
@@ -676,6 +697,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       updateResourceValue,
       updateExistingValue,
       setResourceScope,
+      reassignHubOwnerEnvironment,
       removeResource,
       selectResource,
       getUniqueTfName,
@@ -702,6 +724,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       updateResourceValue,
       updateExistingValue,
       setResourceScope,
+      reassignHubOwnerEnvironment,
       removeResource,
       selectResource,
       getUniqueTfName,

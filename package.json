@@ -7,13 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx scripts/test-invariants.ts && tsx scripts/test-export-map.ts && tsx scripts/test-generate.ts && tsx scripts/test-graph-layout.ts && tsx scripts/test-history.ts && tsx scripts/test-prod-friction.ts && tsx scripts/test-empty-resources.ts",
+    "test": "tsx scripts/test-invariants.ts && tsx scripts/test-export-map.ts && tsx scripts/test-generate.ts && tsx scripts/test-graph-layout.ts && tsx scripts/test-history.ts && tsx scripts/test-prod-friction.ts && tsx scripts/test-empty-resources.ts && tsx scripts/test-hub-dns-ownership.ts",
     "test:generate": "tsx scripts/test-generate.ts",
     "test:history": "tsx scripts/test-history.ts",
     "test:graph": "tsx scripts/test-graph-layout.ts",
     "test:export-map": "tsx scripts/test-export-map.ts",
     "test:prod-friction": "tsx scripts/test-prod-friction.ts",
-    "test:empty-resources": "tsx scripts/test-empty-resources.ts",
+    "test:empty-resources": "tsx scripts/test-empty-resources.ts && tsx scripts/test-hub-dns-ownership.ts",
     "test:invariants": "tsx scripts/test-invariants.ts"
   },
   "dependencies": {
