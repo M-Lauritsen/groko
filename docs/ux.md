@@ -65,6 +65,22 @@ Headed domain copy; no `.tf` / Terraform jargon.
 
 ## How agents should talk
 
-<!-- Agentsy: fill “How agents should talk” — voice, labels, and Copilot copy rules. Keep domain-first; never invent azurerm_* dumps in UI-facing copy. -->
+Copilot agents (and humans reviewing their drafts) follow the same voice as this UX guide. Full pack details: [developer.md — Copilot / agents](developer.md#copilot--agents).
 
-Stub for Agentsy: agents should mirror this document’s vocabulary (Environment, Shared, Existing|Create, Review, Leave unmapped) and route product asks through the Orchestrator. Full Copilot chapter lives in the developer guide stub.
+### Voice
+
+- Prefer **Orchestrator** for product asks; specialists implement one lane.
+- Labels: **Environment**, **Resources**, **Refs**, **Shared**, **Existing | Create**, **Review changes**, **Leave unmapped**, **owned by {Environment}**.
+- Outcomes in user-facing copy: what changed in the **Environment graph**, not which `.tf` file moved.
+
+### Refuse / redirect
+
+- “Just edit the HCL / `azurerm_*` dump” → redirect to domain Resources or Export Review.
+- Suggesting a primary **`.tf` tree** or fourth main tab → no; Graph is List|Graph on Resources; folder map is Export-only.
+- Silent Prod apply or silent orphan ZIP drops → never; keep confirms.
+- Treating **Docker Compose** as Azure infra catalogue → no; it only runs the app.
+
+### UI-facing agent copy
+
+- Match empty-state and dialog tone from this doc (Tier badge, Esc cancels, one primary CTA).
+- Never invent provider schemas or paste raw `azurerm_*` into UI strings or Review chips.

@@ -108,13 +108,62 @@ npm run dev   # keyboard: Environment → add type → Existing|Create → Expor
 
 ## Copilot / agents
 
-<!-- Agentsy: Copilot chapter -->
+The Copilot pack **already lives in this repo**. You do not copy it from elsewhere. Start here: [README-COPILOT.md](../README-COPILOT.md) → open **`groko-orchestrator`** in Copilot Chat.
 
-In-repo pack: `.github/agents/`, `.github/instructions/`, `.github/prompts/`, plus `AGENTS.md` and `README-COPILOT.md`.
+### Layout
 
-**Start with `groko-orchestrator`.** It classifies and hands off (`send: false`) to `groko-domain` | `groko-ui` | `groko-export` | `groko-infra` | `groko-reviewer`. Specialists implement; the orchestrator never does.
+| Path | Role |
+|------|------|
+| `.github/copilot-instructions.md` | Always-on repo rules (domain-first, HCL edge-only) |
+| `.github/agents/groko-*.agent.md` | Custom agents with handoffs |
+| `.github/instructions/*.instructions.md` | Path-scoped rules (`applyTo`) |
+| `.github/prompts/*.prompt.md` | Slash prompts in VS Code |
+| `AGENTS.md` | Cross-agent project guidance (keeps Next.js block if present) |
 
-Agentsy fills this chapter (agent voice, applyTo globs, slash prompts). Until then: follow [UX](ux.md) vocabulary and [Architecture](architecture.md) invariants.
+### Agents (who does what)
+
+| Agent | Owns | Never |
+|-------|------|--------|
+| **`groko-orchestrator`** | Classify ask → hand off one specialist | Implement product code |
+| **`groko-domain`** | Schema, store, Environment graph, refs, Existing\|Create, Shared vs env, PE/DNS ownership, invariants | Raw HCL in domain types |
+| **`groko-ui`** | Environment → Resources (List\|Graph) → Export UI, a11y, domain labels | Fourth main tab / `.tf` browser |
+| **`groko-export`** | Import/export adapters, Review changes, folder map, orphans, ZIP gates | Primary HCL narrative / silent orphan drops |
+| **`groko-infra`** | Dockerfile + Compose to **run the web app** | Azure catalogue / TF modules |
+| **`groko-reviewer`** | Read-only PR review vs spine + invariants | Shipping fixes |
+
+Handoffs use `send: false` — you approve the brief before the specialist runs.
+
+### Path instructions (`applyTo`)
+
+| File | Applies when you work in |
+|------|--------------------------|
+| `domain.instructions.md` | `src/lib/schema/**`, `src/lib/store/**`, invariant/Prod/hub/history scripts |
+| `ui.instructions.md` | `src/components/**`, `src/app/**` |
+| `export-adapters.instructions.md` | `src/lib/generate/**`, `src/lib/import/**`, `src/components/export/**`, generate/export/graph scripts |
+
+### Slash prompts
+
+| Prompt | Use for |
+|--------|---------|
+| `/slice-environment` | Thin feature along Environment → Resources → Export (routes via Orchestrator) |
+| `/add-catalogue-resource` | End-to-end new catalogue type (domain → UI → emit) |
+| `/review-export` | Export-edge audit (Review, folder map, orphans, ZIP gates) |
+
+### Non‑negotiables for agents
+
+Same as product rules — see [UX](ux.md) and [Architecture](architecture.md):
+
+1. Speak **Environment / Resources / Refs / Review / Export** — not “edit the `.tf`”.
+2. HCL stays at the **edge** (import/export adapters). Never store raw HCL on instances.
+3. Prefer Existing **does not** transfer hub DNS ownership; reassign is explicit.
+4. Prod confirms (#16), orphan ZIP gate (#13/#22), five #19 invariants — do not regress.
+5. Compose = how you **run groko**, not a catalogue resource.
+
+### Quick start for contributors
+
+1. Open Copilot Chat → select **Groko Orchestrator**.
+2. Describe the ask in domain language (or use a slash prompt).
+3. Accept the handoff to the specialist; keep changes thin and tested (`npm test`).
 
 ## Related
 
