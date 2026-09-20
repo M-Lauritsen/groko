@@ -128,6 +128,7 @@ function ShellInner() {
 					<Button
 						variant="secondary"
 						size="sm"
+						aria-label="Resource guide"
 						onClick={() => setGuideOpen(true)}>
 						<span className="hidden sm:inline">Resource guide</span>
 						<span
@@ -185,7 +186,7 @@ function ShellInner() {
 							<div>
 								<h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Environment workspace</h2>
 								<p className="text-sm text-slate-500 mt-1">
-									Review the project at a glance, then open only the settings you need.
+									Step 1 of 3: configure your Environment before defining Resources and preparing Export.
 								</p>
 							</div>
 							<SegmentedControl
@@ -293,7 +294,7 @@ function ShellInner() {
 							</div>
 						)}
 
-						{environmentView === 'setup' && <ProjectSetup />}
+						{environmentView === 'setup' && <ProjectSetup onContinue={() => setTab('builder')} />}
 						{environmentView === 'environments' && <EnvironmentsPanel hideActiveSwitcher />}
 					</div>
 				)}
