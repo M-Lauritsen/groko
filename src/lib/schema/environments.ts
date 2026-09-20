@@ -229,3 +229,29 @@ export function tierShortLabel(env: Environment | undefined | null): string {
   if (env.id === "prod") return "Prod";
   return env.displayName || env.id;
 }
+
+/**
+ * Whether an Environment is the Production tier.
+ * Prefer id `prod`; also displayName Prod/Production and knobs tags Environment=prod|production.
+ */
+export function isProdEnvironment(
+  env: Environment | undefined | null
+): boolean {
+  if (!env) return false;
+  if (env.id === "prod") return true;
+  const display = env.displayName.trim().toLowerCase();
+  if (display === "prod" || display === "production") return true;
+  const tag = (env.knobs?.tags?.Environment ?? "").trim().toLowerCase();
+  if (tag === "prod" || tag === "production") return true;
+  return false;
+}
+
+/** Resolve active Environment and test Prod tier (domain object, not a loose string). */
+export function isActiveEnvironmentProd(
+  environments: Environment[],
+  activeEnvironmentId: string
+): boolean {
+  const active =
+    environmentById(environments, activeEnvironmentId) ?? environments[0];
+  return isProdEnvironment(active);
+}

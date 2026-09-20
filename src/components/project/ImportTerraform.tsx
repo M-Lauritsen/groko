@@ -24,6 +24,8 @@ import {
   tierShortLabel,
 } from "@/lib/schema/environments";
 import type { ResourceInstance, ResourceScope } from "@/lib/schema/types";
+import { shouldGateDestructiveApplyOnProd } from "@/lib/store/prod-friction";
+import { ProdFrictionDialog } from "@/components/project/ProdFrictionDialog";
 
 type WizardStep = "upload" | "review" | "confirm";
 type ApplyMode = "merge" | "replace";
@@ -110,9 +112,19 @@ export function ImportTerraform({
   const [warnings, setWarnings] = useState<string[]>([]);
   const [unmappedArgCount, setUnmappedArgCount] = useState(0);
   const [supportedCount, setSupportedCount] = useState(0);
+  /** Pending Replace/Merge awaiting Prod friction confirm. */
+  const [prodPendingMode, setProdPendingMode] = useState<ApplyMode | null>(
+    null
+  );
 
   const titleId = useId();
   const environments = state.environments;
+  const activeEnv = useMemo(
+    () =>
+      environments.find((e) => e.id === state.activeEnvironmentId) ??
+      environments[0],
+    [environments, state.activeEnvironmentId]
+  );
 
   const resetWizard = useCallback(() => {
     setStep("upload");
@@ -123,6 +135,7 @@ export function ImportTerraform({
     setUnmappedArgCount(0);
     setSupportedCount(0);
     setError(null);
+    setProdPendingMode(null);
   }, []);
 
   const onPick = useCallback(() => {
@@ -199,7 +212,7 @@ export function ImportTerraform({
     setStep("confirm");
   }, [draft.length]);
 
-  const apply = useCallback(
+  const commitImport = useCallback(
     (mode: ApplyMode) => {
       if (draft.length === 0) return;
       // Commit domain ResourceInstances only (labels/scopes/existing/values).
@@ -210,11 +223,25 @@ export function ImportTerraform({
     [draft, importResources, onImported, resetWizard]
   );
 
+  const apply = useCallback(
+    (mode: ApplyMode) => {
+      if (draft.length === 0) return;
+      if (shouldGateDestructiveApplyOnProd(mode, activeEnv)) {
+        setProdPendingMode(mode);
+        return;
+      }
+      commitImport(mode);
+    },
+    [draft.length, activeEnv, commitImport]
+  );
+
   const cancelAll = useCallback(() => {
     resetWizard();
   }, [resetWizard]);
 
   useEffect(() => {
+    // Prod friction owns focus trap + Esc while open.
+    if (prodPendingMode) return;
     const open =
       compact &&
       (step === "review" ||
@@ -238,6 +265,10 @@ export function ImportTerraform({
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
+        if (prodPendingMode) {
+          setProdPendingMode(null);
+          return;
+        }
         if (step === "confirm") setStep("review");
         else cancelAll();
         return;
@@ -261,7 +292,7 @@ export function ImportTerraform({
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused.current?.focus?.();
     };
-  }, [compact, step, error, cancelAll]);
+  }, [compact, step, error, cancelAll, prodPendingMode]);
 
   const skippedGroups = useMemo(() => groupSkipped(skipped), [skipped]);
 
@@ -638,6 +669,16 @@ export function ImportTerraform({
             </div>
           </div>
         )}
+      {prodPendingMode && activeEnv && (
+        <ProdFrictionDialog
+          environment={activeEnv}
+          variant="import"
+          showMerge
+          onReplace={() => commitImport("replace")}
+          onMerge={() => commitImport("merge")}
+          onCancel={() => setProdPendingMode(null)}
+        />
+      )}
       </>
     );
   }
@@ -663,6 +704,17 @@ export function ImportTerraform({
       >
         {body}
       </div>
+
+      {prodPendingMode && activeEnv && (
+        <ProdFrictionDialog
+          environment={activeEnv}
+          variant="import"
+          showMerge
+          onReplace={() => commitImport("replace")}
+          onMerge={() => commitImport("merge")}
+          onCancel={() => setProdPendingMode(null)}
+        />
+      )}
     </Card>
   );
 }

@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useProject } from "@/lib/store/project-context";
 import { STARTERS } from "@/lib/schema/starters";
 import { AZURE_LOCATIONS } from "@/lib/schema/types";
-import { shouldConfirmStarterApply } from "@/lib/store/starter-apply";
+import { starterConfirmKind } from "@/lib/store/prod-friction";
 import {
   Label,
   TextInput,
@@ -16,6 +16,7 @@ import {
   Badge,
 } from "@/components/ui/Field";
 import { ImportTerraform } from "@/components/project/ImportTerraform";
+import { ProdFrictionDialog } from "@/components/project/ProdFrictionDialog";
 
 export function ProjectSetup() {
   const { state, setConfig, applyStarter } = useProject();
@@ -23,9 +24,17 @@ export function ProjectSetup() {
   const [tagKey, setTagKey] = useState("");
   const [tagVal, setTagVal] = useState("");
   const [confirmStarter, setConfirmStarter] = useState<string | null>(null);
+  const [prodStarter, setProdStarter] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const titleId = useId();
+
+  const activeEnv = useMemo(
+    () =>
+      state.environments.find((e) => e.id === state.activeEnvironmentId) ??
+      state.environments[0],
+    [state.environments, state.activeEnvironmentId]
+  );
 
   function addTag() {
     if (!tagKey.trim()) return;
@@ -41,9 +50,15 @@ export function ProjectSetup() {
   }
 
   function onStarterClick(id: string) {
-    if (shouldConfirmStarterApply(state.resources.length)) {
+    const kind = starterConfirmKind(state.resources.length, activeEnv);
+    if (kind === "prod") {
+      previouslyFocused.current = document.activeElement as HTMLElement | null;
+      setProdStarter(id);
+      setConfirmStarter(null);
+    } else if (kind === "normal") {
       previouslyFocused.current = document.activeElement as HTMLElement | null;
       setConfirmStarter(id);
+      setProdStarter(null);
     } else {
       applyStarter(id, "replace");
     }
@@ -51,6 +66,11 @@ export function ProjectSetup() {
 
   function closeConfirm() {
     setConfirmStarter(null);
+    previouslyFocused.current?.focus?.();
+  }
+
+  function closeProdConfirm() {
+    setProdStarter(null);
     previouslyFocused.current?.focus?.();
   }
 
@@ -283,6 +303,23 @@ export function ProjectSetup() {
               </Button>
             </div>
           </div>
+        )}
+
+        {prodStarter && activeEnv && (
+          <ProdFrictionDialog
+            environment={activeEnv}
+            variant="starter"
+            showMerge
+            onReplace={() => {
+              applyStarter(prodStarter, "replace");
+              closeProdConfirm();
+            }}
+            onMerge={() => {
+              applyStarter(prodStarter, "merge");
+              closeProdConfirm();
+            }}
+            onCancel={closeProdConfirm}
+          />
         )}
       </Card>
 

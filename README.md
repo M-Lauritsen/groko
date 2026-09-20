@@ -97,7 +97,8 @@ Edit `environments/backend.*.hcl` (`storage_account_name`, etc.) and fill `CHANG
 ## Undo & safer starters
 
 - **Undo / Redo** — header and resource-list controls, plus `Cmd/Ctrl+Z` and `Shift+Cmd/Ctrl+Z` (or `Ctrl+Y`). History keeps ~40 snapshots of resources + selection + **environments/scopes** + **exportConfig** (folder map overrides); value typing is debounced (~300ms) so undo is not character-by-character. Snapshots cover add/remove, value edits, use-existing toggles, import merge/replace, starter apply, and environment knob edits.
-- **Starter apply** — empty canvas applies immediately. If resources already exist, a confirm offers **Replace all**, **Merge with starter**, or **Cancel** (no silent wipe).
+- **Starter apply** — empty canvas applies immediately (non-Prod). If resources already exist, a confirm offers **Replace all**, **Merge with starter**, or **Cancel** (no silent wipe).
+- **Prod friction** (Develops #1) — when the active **Environment** is Prod (`id === "prod"`, displayName Prod/Production, or knobs tag `Environment=prod|production`), destructive apply needs an extra confirm: starter apply (even on an empty canvas), and Import **Replace all** / **Merge**. Dialog title *This Environment is Production*; primary **Replace on Prod** (danger); Esc cancels; Tier badge shown. Dev/Staging unchanged.
 
 ## Architecture
 
@@ -107,7 +108,7 @@ src/lib/generate/   # HCL emitters, module grouping, export folder map, ZIP
 src/lib/import/     # Client-side HCL parse → ResourceInstance[]
 src/lib/store/      # React project state + undo history + starter apply
 src/components/     # Environment / catalogue / forms / dependency graph / export
-scripts/test-generate.ts · test-export-map.ts · test-history.ts · test-graph-layout.ts
+scripts/test-generate.ts · test-export-map.ts · test-history.ts · test-graph-layout.ts · test-prod-friction.ts
 ```
 
 ## Catalogue highlights
@@ -165,15 +166,15 @@ Starter **Storage + Function App** scaffolds shared RG/storage + Y1 plan + Linux
 
 Keyboard-only smoke path after `npm run dev`:
 
-1. **Environment** — Tab to **Dev | Staging | Prod**; change tier with arrows; confirm **Tier:** badge updates. Fill project name; Tab to a starter; Enter. If resources already exist, confirm dialog traps focus; **Esc** cancels.
-2. **Import existing** (still on Environment) — Tab to **Upload Terraform**; choose `.tf` / zip. Review table shows domain labels (not raw HCL). Arrow/Tab to toggle **Existing | Create** and scope Shared/env. Continue → **Replace all** / **Merge into current** / **Cancel** (Esc back). Lands on **Resources** with an imported instance selected.
+1. **Environment** — Tab to **Dev | Staging | Prod**; change tier with arrows; confirm **Tier:** badge updates. Fill project name; Tab to a starter; Enter. If resources already exist, confirm dialog traps focus; **Esc** cancels. Switch to **Prod**, apply a starter → Prod friction dialog (*This Environment is Production*, Tier badge, **Replace on Prod** / **Merge with starter** / **Cancel**); Esc cancels; no silent apply on empty Prod either.
+2. **Import existing** (still on Environment) — Tab to **Upload Terraform**; choose `.tf` / zip. Review table shows domain labels (not raw HCL). Arrow/Tab to toggle **Existing | Create** and scope Shared/env. Continue → **Replace all** / **Merge into current** / **Cancel** (Esc back). On **Prod**, Replace/Merge opens the Prod friction step before commit. Lands on **Resources** with an imported instance selected.
 3. **Continue to resources** — Header shows **Tier:** badge. Catalogue search has a visible **Search resources** label; rows show human labels + always-visible **+** (no hover-only add).
 4. **List | Graph** — Tab to the Resources view toggle; switch to **Graph**. Nodes are shared + active-env resources (Existing/Create + Shared vs env styling). Arrow/Tab to a node; **Enter** selects — the same **ResourceForm** (mode, scope, fields, deps/used-by) opens in the side panel (one selection model). Switch back to **List**; selection stays. Cross-env-blocked refs are not drawn as valid edges. Undo still works.
 5. Add **Application Insights** (own card beside Function Apps) → **Existing | Create**; optionally link LAW. Add **Linux Function App** → optional **Application Insights** reference picker (not a settings dump). Add **Private DNS Zone** → defaults **Existing**.
 6. Toggle Existing/Create; fill an existing id/name field — hints use plain language (no `data.azurerm_…`).
 7. **Export** — Tier badge still visible; open **Folder structure** (tree + detail). Toggle **Map mode**; reassign a resource or domain group; confirm orphan list blocks **Download ZIP** until assigned or you confirm **Leave unmapped…**. Open Live HCL / Files; Download ZIP. HCL remains edge-only (Export/Import).
 
-Acceptance: keyboard can complete Environment → import review/confirm → Resources → List|Graph selection sync → add resource → toggle existing/create → export; Import / Graph are not a fourth main tab; no new catalogue types; Graph reuses ResourceForm (no second detail schema).
+Acceptance: keyboard can complete Environment → import review/confirm → Resources → List|Graph selection sync → add resource → toggle existing/create → export; on Prod, starter/import Replace|Merge require Prod friction (Esc cancels); Import / Graph are not a fourth main tab; no new catalogue types; Graph reuses ResourceForm (no second detail schema).
 
 ## Known gaps
 
