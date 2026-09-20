@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useProject } from "@/lib/store/project-context";
 import { STARTERS } from "@/lib/schema/starters";
 import { AZURE_LOCATIONS } from "@/lib/schema/types";
@@ -23,6 +23,9 @@ export function ProjectSetup() {
   const [tagKey, setTagKey] = useState("");
   const [tagVal, setTagVal] = useState("");
   const [confirmStarter, setConfirmStarter] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+  const titleId = useId();
 
   function addTag() {
     if (!tagKey.trim()) return;
@@ -39,11 +42,58 @@ export function ProjectSetup() {
 
   function onStarterClick(id: string) {
     if (shouldConfirmStarterApply(state.resources.length)) {
+      previouslyFocused.current = document.activeElement as HTMLElement | null;
       setConfirmStarter(id);
     } else {
       applyStarter(id, "replace");
     }
   }
+
+  function closeConfirm() {
+    setConfirmStarter(null);
+    previouslyFocused.current?.focus?.();
+  }
+
+  // Focus trap + Esc for starter confirm dialog
+  useEffect(() => {
+    if (!confirmStarter) return;
+    const root = dialogRef.current;
+    if (!root) return;
+
+    const focusables = () =>
+      Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => !el.hasAttribute("disabled") && el.tabIndex !== -1);
+
+    const first = focusables()[0];
+    first?.focus();
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeConfirm();
+        return;
+      }
+      if (e.key !== "Tab" || !root) return;
+      const list = focusables();
+      if (list.length === 0) return;
+      const firstEl = list[0];
+      const lastEl = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === firstEl) {
+        e.preventDefault();
+        lastEl.focus();
+      } else if (!e.shiftKey && document.activeElement === lastEl) {
+        e.preventDefault();
+        firstEl.focus();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- closeConfirm uses stable setters
+  }, [confirmStarter]);
 
   const pendingLabel =
     STARTERS.find((s) => s.id === confirmStarter)?.label ?? confirmStarter;
@@ -112,7 +162,7 @@ export function ProjectSetup() {
                 <button
                   type="button"
                   onClick={() => removeTag(k)}
-                  className="ml-1 text-slate-400 hover:text-rose-500"
+                  className="ml-1 text-slate-400 hover:text-rose-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
                   aria-label={`Remove tag ${k}`}
                 >
                   ×
@@ -150,7 +200,7 @@ export function ProjectSetup() {
           Scaffold a common topology. On an empty canvas the starter applies
           immediately; if you already have resources you can replace or merge.
         </p>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2" role="group" aria-label="Starter templates">
           {STARTERS.map((s) => {
             const isActive =
               config.starter === s.id &&
@@ -160,7 +210,8 @@ export function ProjectSetup() {
                 key={s.id}
                 type="button"
                 onClick={() => onStarterClick(s.id)}
-                className={`text-left rounded-xl border p-4 transition-all hover:border-sky-400 hover:shadow-md ${
+                aria-pressed={isActive}
+                className={`text-left rounded-xl border p-4 transition-all hover:border-sky-400 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 ${
                   isActive
                     ? "border-sky-500 bg-sky-50 dark:bg-sky-950/40 ring-1 ring-sky-500"
                     : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
@@ -189,12 +240,14 @@ export function ProjectSetup() {
 
         {confirmStarter && (
           <div
+            ref={dialogRef}
             role="dialog"
-            aria-labelledby="starter-confirm-title"
+            aria-modal="true"
+            aria-labelledby={titleId}
             className="mt-4 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-700 p-4"
           >
             <p
-              id="starter-confirm-title"
+              id={titleId}
               className="text-sm text-amber-900 dark:text-amber-200 mb-1 font-medium"
             >
               Apply starter “{pendingLabel}”?
@@ -202,7 +255,7 @@ export function ProjectSetup() {
             <p className="text-sm text-amber-800 dark:text-amber-300/90 mb-3">
               Your canvas already has {state.resources.length} resource(s).
               Choose how to apply the starter — nothing is changed until you
-              pick an option.
+              pick an option. Press Esc to cancel.
             </p>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -210,7 +263,7 @@ export function ProjectSetup() {
                 size="sm"
                 onClick={() => {
                   applyStarter(confirmStarter, "replace");
-                  setConfirmStarter(null);
+                  closeConfirm();
                 }}
               >
                 Replace all
@@ -220,16 +273,12 @@ export function ProjectSetup() {
                 size="sm"
                 onClick={() => {
                   applyStarter(confirmStarter, "merge");
-                  setConfirmStarter(null);
+                  closeConfirm();
                 }}
               >
                 Merge with starter
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setConfirmStarter(null)}
-              >
+              <Button variant="ghost" size="sm" onClick={closeConfirm}>
                 Cancel
               </Button>
             </div>

@@ -8,9 +8,12 @@ import {
   normalizeScope,
   resourcesVisibleInEnv,
   scopeLabel,
+  tierShortLabel,
 } from "@/lib/schema/environments";
 import { Card, SectionTitle, Badge, Button } from "@/components/ui/Field";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { UndoRedoControls } from "@/components/history/UndoRedoControls";
+import { TierBadge } from "@/components/project/TierBadge";
 
 export function ResourceList() {
   const { state, selectResource, removeResource, setActiveEnvironment } =
@@ -37,6 +40,7 @@ export function ResourceList() {
         action={
           <div className="flex items-center gap-2">
             <UndoRedoControls compact />
+            <TierBadge />
             <Badge tone="slate">{visible.length}</Badge>
           </div>
         }
@@ -44,21 +48,18 @@ export function ResourceList() {
         Project resources
       </SectionTitle>
 
-      <div className="mb-3 flex flex-wrap gap-1">
-        {environments.map((e) => (
-          <button
-            key={e.id}
-            type="button"
-            onClick={() => setActiveEnvironment(e.id)}
-            className={`rounded-md px-2 py-0.5 text-[11px] font-medium border ${
-              e.id === activeEnvironmentId
-                ? "border-sky-500 bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300"
-                : "border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300"
-            }`}
-          >
-            {e.displayName}
-          </button>
-        ))}
+      <div className="mb-3">
+        <SegmentedControl
+          ariaLabel="Filter by environment tier"
+          size="sm"
+          value={activeEnvironmentId}
+          onChange={setActiveEnvironment}
+          options={environments.map((e) => ({
+            value: e.id,
+            label: e.displayName,
+            shortLabel: tierShortLabel(e),
+          }))}
+        />
       </div>
       <p className="text-[11px] text-slate-400 mb-2">
         Showing shared + {activeEnv?.displayName ?? "env"} · {sharedCount}{" "}
@@ -87,7 +88,7 @@ export function ResourceList() {
             return (
               <li key={r.id}>
                 <div
-                  className={`rounded-lg border px-2.5 py-2 cursor-pointer transition-colors ${
+                  className={`rounded-lg border px-2.5 py-2 cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${
                     selected
                       ? "border-sky-500 bg-sky-50 dark:bg-sky-950/40 ring-1 ring-sky-500"
                       : "border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600"
@@ -96,6 +97,7 @@ export function ResourceList() {
                   onKeyDown={(e) => e.key === "Enter" && selectResource(r.id)}
                   role="button"
                   tabIndex={0}
+                  aria-label={`${def?.label ?? r.type} ${r.tfName}`}
                 >
                   <div className="flex items-start gap-2">
                     <span className="text-base mt-0.5" aria-hidden>
@@ -112,9 +114,9 @@ export function ResourceList() {
                       </div>
                       <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                         {r.useExisting ? (
-                          <Badge tone="amber">data / existing</Badge>
+                          <Badge tone="amber">existing</Badge>
                         ) : (
-                          <Badge tone="emerald">resource</Badge>
+                          <Badge tone="emerald">create</Badge>
                         )}
                         <Badge tone={scope.kind === "shared" ? "violet" : "sky"}>
                           {r.type ===
@@ -140,6 +142,7 @@ export function ResourceList() {
                         e.stopPropagation();
                         removeResource(r.id);
                       }}
+                      aria-label={`Remove ${def?.label ?? r.type} ${r.tfName}`}
                       title="Remove"
                     >
                       ×

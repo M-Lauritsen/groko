@@ -5,6 +5,8 @@ import { useProject } from "@/lib/store/project-context";
 import { previewHcl, generateProject } from "@/lib/generate/hcl";
 import { downloadProjectZip } from "@/lib/generate/zip";
 import { Button, Card, SectionTitle, Badge } from "@/components/ui/Field";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { TierBadge } from "@/components/project/TierBadge";
 
 type Tab = "preview" | "files";
 
@@ -74,6 +76,7 @@ export function ExportPanel() {
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
           <SectionTitle>Export</SectionTitle>
+          <TierBadge />
           <Badge tone="sky">{state.resources.length} resources</Badge>
           <Badge tone="violet">{state.environments.length} envs</Badge>
           <Badge tone="violet">{moduleCount} module files</Badge>
@@ -87,30 +90,16 @@ export function ExportPanel() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden text-xs">
-            <button
-              type="button"
-              className={`px-3 py-1.5 ${
-                tab === "preview"
-                  ? "bg-sky-600 text-white"
-                  : "bg-white dark:bg-slate-900 text-slate-600"
-              }`}
-              onClick={() => setTab("preview")}
-            >
-              Live HCL
-            </button>
-            <button
-              type="button"
-              className={`px-3 py-1.5 ${
-                tab === "files"
-                  ? "bg-sky-600 text-white"
-                  : "bg-white dark:bg-slate-900 text-slate-600"
-              }`}
-              onClick={() => setTab("files")}
-            >
-              Files
-            </button>
-          </div>
+          <SegmentedControl
+            ariaLabel="Export view"
+            size="sm"
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: "preview", label: "Live HCL" },
+              { value: "files", label: "Files" },
+            ]}
+          />
           <Button variant="secondary" size="sm" onClick={onCopy}>
             {copied ? "Copied!" : "Copy"}
           </Button>
@@ -133,7 +122,7 @@ export function ExportPanel() {
                   <button
                     type="button"
                     onClick={() => setSelectedFile(name)}
-                    className={`w-full text-left rounded-md px-2 py-1.5 text-[11px] font-mono truncate ${
+                    className={`w-full text-left rounded-md px-2 py-1.5 text-[11px] font-mono truncate focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${
                       activeFile === name
                         ? "bg-sky-600 text-white"
                         : "text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800"

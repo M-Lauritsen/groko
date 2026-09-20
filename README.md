@@ -21,7 +21,7 @@ npm test
 
 ## Import existing Terraform
 
-Upload one or more `.tf` / `.tfvars` files, or a `.zip` of a Terraform root, via **Setup → Import existing Terraform** or the header **Upload Terraform** control.
+Upload one or more `.tf` / `.tfvars` files, or a `.zip` of a Terraform root, via **Environment → Import existing Terraform** or the header **Upload Terraform** control.
 
 - Client-side only (JSZip for archives). Shows a summary of supported vs skipped types before merge/replace.
 - Maps `resource "azurerm_…"` and `data "azurerm_…"` blocks that exist in `RESOURCE_CATALOGUE`.
@@ -33,12 +33,11 @@ Not a perfect round-trip — nested blocks and complex HCL are best-effort.
 
 ## How export works
 
-1. **Setup** — name, region, prefix, tags; starters include **Storage + Function App**, **ACR + Container Apps** (VNet + MI + AcrPull + Key Vault sample secret + HTTP scale) and **Private ACR** (Premium ACR public-off + PE subnet + hub Private DNS Use existing + VNet link + MI/AcrPull).
-2. **Environments** — first-class `dev` / `staging` / `prod` (add more as needed) with knobs (naming suffix, tags, ACR SKU, CA cpu/memory/replicas, ingress). Not a string flag on resources.
-3. **Resources** — each instance is **Shared** or **scoped to one environment**. Reference pickers only allow shared + same-env targets (no cross-env leakage). Catalogue has no `.tf` file tree in primary nav.
-4. **ACR auth** — per app: **Managed identity (recommended)** or Admin credentials (lab fallback).
-5. **Container App extras** — list editors for env vars and app secrets (plain → sensitive var, or Key Vault ref + optional Secrets User role); optional HTTP scale rule (`concurrent_requests`).
-6. **Export** — modular ZIP driven by Environment objects:
+1. **Environment** — project name/region/prefix/tags + starters, plus required **Dev | Staging | Prod** active-tier control and env knobs. Setup is folded into this step. Tier badge stays visible in header / Resources / Export after you leave this step.
+2. **Resources** — each instance is **Shared** or **scoped to one environment**. Forms open with **Existing | Create** (Private DNS defaults Existing). Reference pickers only allow shared + same-env targets. Catalogue shows human labels (no raw `azurerm_*` on primary rows).
+3. **ACR auth** — per app: **Managed identity (recommended)** or Admin credentials (lab fallback).
+4. **Container App extras** — list editors for env vars and app secrets (plain → sensitive var, or Key Vault ref + optional Secrets User role); optional HTTP scale rule (`concurrent_requests`).
+5. **Export** — modular ZIP driven by Environment objects (HCL only here / Import):
 
 ```
 config.tf                 # versions + provider + partial backend "azurerm" {}
@@ -94,7 +93,7 @@ src/lib/schema/     # ResourceTypeDef catalogue + starters
 src/lib/generate/   # HCL emitters, module grouping, ZIP
 src/lib/import/     # Client-side HCL parse → ResourceInstance[]
 src/lib/store/      # React project state + undo history + starter apply
-src/components/     # Setup / catalogue / forms / export
+src/components/     # Environment / catalogue / forms / export
 scripts/test-generate.ts
 ```
 
@@ -136,6 +135,20 @@ First-class catalogue resource (forms, refs, scopes — not raw HCL):
 | `azurerm_storage_account` | Shared | Backend storage; emit uses `name` + `primary_access_key` |
 
 UX stays short: pick plan, storage, runtime — not every Functions setting. Starter **Storage + Function App** scaffolds shared RG/storage + Y1 plan + Linux Function App (Node 20) scoped to **dev**. Export goes to `modules/app_service/` (with storage cross-module inputs).
+
+
+
+## UX / a11y click-test path (PR)
+
+Keyboard-only smoke path after `npm run dev`:
+
+1. **Environment** — Tab to **Dev | Staging | Prod**; change tier with arrows; confirm **Tier:** badge updates. Fill project name; Tab to a starter; Enter. If resources already exist, confirm dialog traps focus; **Esc** cancels.
+2. **Continue to resources** — Header shows **Tier:** badge. Catalogue search has a visible **Search resources** label; rows show human labels + always-visible **+** (no hover-only add).
+3. Add **Linux Function App** (short card) → form opens with **Existing | Create** at top; toggle both modes. Add **Private DNS Zone** → defaults **Existing**.
+4. Toggle Existing/Create; fill an existing id/name field — hints use plain language (no `data.azurerm_…`).
+5. **Export** — Tier badge still visible; open Live HCL / Files; Download ZIP. HCL remains edge-only (Export/Import).
+
+Acceptance: keyboard can complete Environment → add resource → toggle existing/create → export; no new catalogue types.
 
 ## Known gaps
 

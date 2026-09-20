@@ -29,3 +29,16 @@ body {
   scrollbar-width: thin;
   scrollbar-color: #94a3b8 transparent;
 }
+
+/* Visible focus rings for keyboard users (do not rely on hover alone) */
+:focus-visible {
+  outline: 2px solid #0ea5e9;
+  outline-offset: 2px;
+}
+
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible),
+[role="tab"]:focus:not(:focus-visible),
+[role="button"]:focus:not(:focus-visible) {
+  outline: none;
+}
