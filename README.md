@@ -21,13 +21,16 @@ npm test
 
 ## Import existing Terraform
 
-Upload one or more `.tf` / `.tfvars` files, or a `.zip` of a Terraform root, via **Environment → Import existing Terraform** or the header **Upload Terraform** control.
+Upload one or more `.tf` / `.tfvars` files, or a `.zip` of a Terraform root, via **Environment → Import existing** or the header **Upload Terraform** control (Environment-step edge action — not a fourth main tab).
 
-- Client-side only (JSZip for archives). Shows a summary of supported vs skipped types before merge/replace.
-- Maps `resource "azurerm_…"` and `data "azurerm_…"` blocks that exist in `RESOURCE_CATALOGUE`.
-- Data sources become **Use existing** with identifying values filled when possible.
-- Simple interpolations like `azurerm_resource_group.main.name` / `.id` become reference pickers when the target was imported.
-- Skips/warns: modules (optional `modules/*/main.tf` extract only), `for_each`/`count`, unknown providers, unsupported types, locals-heavy expressions, unmapped arguments.
+Wizard: **Upload → Review mapping → Confirm Replace / Merge / Cancel** (same safety pattern as starters).
+
+- Review table is **domain language** only: type label (Resource Group, VNet, …), name, **Existing | Create**, **Shared vs env**. Terraform type ids are muted secondary text — no raw HCL in the primary step.
+- Edit scope/tier and Existing|Create on the draft graph before commit; skipped/unmapped types stay out of the graph until you add them from the catalogue.
+- Collapsed **Couldn't map** list with counts and plain-language reasons (optional detail disclosure for warnings).
+- Client-side only (JSZip for archives). Adapter maps HCL → domain `ResourceInstance`s; apply commits domain state only (no raw HCL stored on instances).
+- Data sources → **Existing**; resources → **Create**. Env-ish names/tags → suggested env scope (toggle before apply).
+- Skips: modules, `for_each`/`count`, unknown providers, unsupported catalogue types, complex expressions.
 
 Not a perfect round-trip — nested blocks and complex HCL are best-effort.
 
@@ -143,12 +146,13 @@ UX stays short: pick plan, storage, runtime — not every Functions setting. Sta
 Keyboard-only smoke path after `npm run dev`:
 
 1. **Environment** — Tab to **Dev | Staging | Prod**; change tier with arrows; confirm **Tier:** badge updates. Fill project name; Tab to a starter; Enter. If resources already exist, confirm dialog traps focus; **Esc** cancels.
-2. **Continue to resources** — Header shows **Tier:** badge. Catalogue search has a visible **Search resources** label; rows show human labels + always-visible **+** (no hover-only add).
-3. Add **Linux Function App** (short card) → form opens with **Existing | Create** at top; toggle both modes. Add **Private DNS Zone** → defaults **Existing**.
-4. Toggle Existing/Create; fill an existing id/name field — hints use plain language (no `data.azurerm_…`).
-5. **Export** — Tier badge still visible; open Live HCL / Files; Download ZIP. HCL remains edge-only (Export/Import).
+2. **Import existing** (still on Environment) — Tab to **Upload Terraform**; choose `.tf` / zip. Review table shows domain labels (not raw HCL). Arrow/Tab to toggle **Existing | Create** and scope Shared/env. Continue → **Replace all** / **Merge into current** / **Cancel** (Esc back). Lands on **Resources** with an imported instance selected.
+3. **Continue to resources** — Header shows **Tier:** badge. Catalogue search has a visible **Search resources** label; rows show human labels + always-visible **+** (no hover-only add).
+4. Add **Linux Function App** (short card) → form opens with **Existing | Create** at top; toggle both modes. Add **Private DNS Zone** → defaults **Existing**.
+5. Toggle Existing/Create; fill an existing id/name field — hints use plain language (no `data.azurerm_…`).
+6. **Export** — Tier badge still visible; open Live HCL / Files; Download ZIP. HCL remains edge-only (Export/Import).
 
-Acceptance: keyboard can complete Environment → add resource → toggle existing/create → export; no new catalogue types.
+Acceptance: keyboard can complete Environment → import review/confirm → Resources → add resource → toggle existing/create → export; Import is not a fourth main tab; no new catalogue types.
 
 ## Known gaps
 

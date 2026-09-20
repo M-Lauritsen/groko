@@ -12,6 +12,7 @@ import type {
 } from "../schema/types";
 import {
   defaultEnvironments,
+  defaultScopeForNewResource,
   inferScopeFromName,
   sharedScope,
 } from "../schema/environments";
@@ -438,6 +439,37 @@ export function mapToProject(
         : typeof existingValues.name === "string"
           ? existingValues.name
           : undefined;
+    const tags = values.tags;
+    const tagEnv =
+      tags &&
+      typeof tags === "object" &&
+      tags !== null &&
+      !Array.isArray(tags) &&
+      typeof (tags as Record<string, unknown>).Environment === "string"
+        ? String((tags as Record<string, unknown>).Environment)
+        : undefined;
+    // Prefer the first hint that actually yields an env scope (name, then tag, then tfName)
+    let scope = sharedScope();
+    let matchedFromHint = false;
+    for (const hint of [nameHint, tagEnv, tfName]) {
+      if (!hint) continue;
+      const guessed = inferScopeFromName(hint, environments);
+      if (guessed.kind === "environment") {
+        scope = guessed;
+        matchedFromHint = true;
+        break;
+      }
+    }
+    if (!matchedFromHint) {
+      // Cheap fallback: catalogue types that are usually env-scoped → first env
+      const fallback = defaultScopeForNewResource(
+        block.type,
+        environments[0]?.id ?? "dev"
+      );
+      if (fallback.kind === "environment") {
+        scope = fallback;
+      }
+    }
     const instance: ResourceInstance = {
       id: uid(),
       type: block.type,
@@ -445,10 +477,8 @@ export function mapToProject(
       useExisting,
       values,
       existingValues,
-      // Best-effort: env-named resources → that env; otherwise shared
-      scope: nameHint
-        ? inferScopeFromName(nameHint, environments)
-        : sharedScope(),
+      // Domain scope only — never store raw HCL on the instance
+      scope,
     };
     pending.push({ block, instance, rawAttrs: block.body.attrs });
   }

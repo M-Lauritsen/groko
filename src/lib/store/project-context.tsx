@@ -546,6 +546,13 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     (resources: ResourceInstance[], mode: "merge" | "replace") => {
       commit((s) => {
         const next = mergeImportedResources(s.resources, resources, mode);
+        // Land on Resources with the first newly imported instance selected.
+        const selectId =
+          mode === "replace"
+            ? next[0]?.id ?? null
+            : next[Math.max(0, next.length - resources.length)]?.id ??
+              next[0]?.id ??
+              null;
         return {
           ...s,
           config: {
@@ -553,7 +560,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
             starter: mode === "replace" ? "imported" : s.config.starter,
           },
           resources: next,
-          selectedResourceId: next[0]?.id ?? null,
+          selectedResourceId: selectId,
         };
       });
     },

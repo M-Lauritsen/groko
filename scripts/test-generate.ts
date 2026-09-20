@@ -547,9 +547,51 @@ module "network" {
     // Import defaults to shared unless env-named
     assert.ok(merged.every((r) => r.scope?.kind === "shared" || r.scope?.kind === "environment"));
     const envNamed = merged.find((r) => String(r.values.name ?? "").includes("import-demo"));
-    // rg-import-demo has no clear env token → shared
-    assert.equal(envNamed?.scope.kind, "shared");
+    // tags.Environment = "dev" on the fixture → env scope (name alone has no token)
+    assert.equal(envNamed?.scope.kind, "environment");
+    assert.equal(
+      envNamed?.scope.kind === "environment" ? envNamed.scope.environmentId : null,
+      "dev"
+    );
     console.log("✓ Import: RG/VNet/subnet refs + data source + unsupported/module skip");
+
+    // Env-name + tags.Environment → env scope; plain names stay shared
+    {
+      const envFixture = `
+resource "azurerm_resource_group" "dev_rg" {
+  name     = "rg-myapp-dev"
+  location = "westeurope"
+}
+resource "azurerm_resource_group" "tagged" {
+  name     = "rg-plain"
+  location = "westeurope"
+  tags = {
+    Environment = "staging"
+  }
+}
+resource "azurerm_container_app" "web" {
+  name = "ca-plain"
+}
+`;
+      const envParsed = parseHcl(envFixture, "env-scope.tf");
+      const envSummary = mapToProject(envParsed);
+      const devRg = envSummary.resources.find((r) => r.tfName === "dev_rg");
+      assert.ok(devRg);
+      assert.equal(devRg!.scope.kind, "environment");
+      assert.equal(
+        devRg!.scope.kind === "environment" ? devRg!.scope.environmentId : null,
+        "dev"
+      );
+      const tagged = envSummary.resources.find((r) => r.tfName === "tagged");
+      assert.ok(tagged);
+      assert.equal(tagged!.scope.kind, "environment");
+      assert.equal(
+        tagged!.scope.kind === "environment" ? tagged!.scope.environmentId : null,
+        "staging"
+      );
+      console.log("✓ Import scope heuristics: env name + tags.Environment");
+    }
+
   }
 
   // 11) Environment objects drive tfvars (not hard-coded)
