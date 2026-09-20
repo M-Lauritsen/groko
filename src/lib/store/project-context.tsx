@@ -4,7 +4,9 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type {
@@ -13,8 +15,22 @@ import type {
   ResourceInstance,
 } from "../schema/types";
 import { getResourceType } from "../schema/resources";
-import { getStarter } from "../schema/starters";
 import { mergeImportedResources } from "../import/mapToProject";
+import {
+  canRedo as historyCanRedo,
+  canUndo as historyCanUndo,
+  cloneProjectState,
+  createHistory,
+  mutateWithHistory,
+  redo as historyRedo,
+  undo as historyUndo,
+  VALUE_EDIT_DEBOUNCE_MS,
+  type HistoryStack,
+} from "./history";
+import {
+  applyStarterToState,
+  type StarterApplyMode,
+} from "./starter-apply";
 
 function uid(): string {
   return `r_${Math.random().toString(36).slice(2, 10)}`;
@@ -28,10 +44,20 @@ const defaultConfig: ProjectConfig = {
   starter: "blank",
 };
 
+const initialState: ProjectState = {
+  config: defaultConfig,
+  resources: [],
+  selectedResourceId: null,
+};
+
 interface ProjectContextValue {
   state: ProjectState;
+  canUndo: boolean;
+  canRedo: boolean;
+  undo: () => void;
+  redo: () => void;
   setConfig: (partial: Partial<ProjectConfig>) => void;
-  applyStarter: (starterId: string) => void;
+  applyStarter: (starterId: string, mode?: StarterApplyMode) => void;
   addResource: (type: string) => string;
   updateResource: (id: string, patch: Partial<ResourceInstance>) => void;
   updateResourceValue: (id: string, key: string, value: unknown) => void;
@@ -48,11 +74,73 @@ interface ProjectContextValue {
 const ProjectContext = createContext<ProjectContextValue | null>(null);
 
 export function ProjectProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<ProjectState>({
-    config: defaultConfig,
-    resources: [],
-    selectedResourceId: null,
-  });
+  const [history, setHistory] = useState<HistoryStack<ProjectState>>(() =>
+    createHistory(initialState)
+  );
+  const state = history.present;
+
+  /** Coalesce rapid value edits into one undo step. */
+  const valueEditCoalesceRef = useRef(false);
+  const valueEditTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearValueEditCoalesce = useCallback(() => {
+    valueEditCoalesceRef.current = false;
+    if (valueEditTimerRef.current) {
+      clearTimeout(valueEditTimerRef.current);
+      valueEditTimerRef.current = null;
+    }
+  }, []);
+
+  const armValueEditCoalesce = useCallback(() => {
+    valueEditCoalesceRef.current = true;
+    if (valueEditTimerRef.current) clearTimeout(valueEditTimerRef.current);
+    valueEditTimerRef.current = setTimeout(() => {
+      valueEditCoalesceRef.current = false;
+      valueEditTimerRef.current = null;
+    }, VALUE_EDIT_DEBOUNCE_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (valueEditTimerRef.current) clearTimeout(valueEditTimerRef.current);
+    };
+  }, []);
+
+  /** Snapshot then mutate (non-debounced structural edits). */
+  const commit = useCallback(
+    (mutator: (s: ProjectState) => ProjectState) => {
+      clearValueEditCoalesce();
+      setHistory((h) =>
+        mutateWithHistory(h, mutator, { clone: cloneProjectState })
+      );
+    },
+    [clearValueEditCoalesce]
+  );
+
+  /** Debounced value edits — one history entry per typing burst. */
+  const commitValueEdit = useCallback(
+    (mutator: (s: ProjectState) => ProjectState) => {
+      const coalesce = valueEditCoalesceRef.current;
+      armValueEditCoalesce();
+      setHistory((h) =>
+        mutateWithHistory(h, mutator, {
+          coalesce,
+          clone: cloneProjectState,
+        })
+      );
+    },
+    [armValueEditCoalesce]
+  );
+
+  const undo = useCallback(() => {
+    clearValueEditCoalesce();
+    setHistory((h) => historyUndo(h, cloneProjectState));
+  }, [clearValueEditCoalesce]);
+
+  const redo = useCallback(() => {
+    clearValueEditCoalesce();
+    setHistory((h) => historyRedo(h, cloneProjectState));
+  }, [clearValueEditCoalesce]);
 
   const getUniqueTfName = useCallback(
     (type: string, preferred?: string) => {
@@ -70,25 +158,22 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   );
 
   const setConfig = useCallback((partial: Partial<ProjectConfig>) => {
-    setState((s) => ({
-      ...s,
-      config: { ...s.config, ...partial },
+    // Config-only edits are not undoable (per feature scope).
+    setHistory((h) => ({
+      ...h,
+      present: {
+        ...h.present,
+        config: { ...h.present.config, ...partial },
+      },
     }));
   }, []);
 
-  const applyStarter = useCallback((starterId: string) => {
-    setState((s) => {
-      const starter = getStarter(starterId);
-      if (!starter) return s;
-      const config = { ...s.config, starter: starterId };
-      const resources = starter.build(config, uid);
-      return {
-        config,
-        resources,
-        selectedResourceId: resources[0]?.id ?? null,
-      };
-    });
-  }, []);
+  const applyStarter = useCallback(
+    (starterId: string, mode: StarterApplyMode = "replace") => {
+      commit((s) => applyStarterToState(s, starterId, mode, uid));
+    },
+    [commit]
+  );
 
   const addResource = useCallback(
     (type: string) => {
@@ -96,7 +181,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       if (!def) return "";
       const id = uid();
 
-      setState((s) => {
+      commit((s) => {
         const existingNames = new Set(
           s.resources.filter((r) => r.type === type).map((r) => r.tfName)
         );
@@ -118,19 +203,30 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         if (values.name === "" || values.name === undefined) {
           const prefix = s.config.namingPrefix;
           const short = type.replace("azurerm_", "").replace(/_/g, "-");
-          // Include tfName so multiple instances do not collide in Azure
-          const suffix = tfName === "main" || tfName === "app" || tfName === "default"
-            ? ""
-            : `-${tfName.replace(/_/g, "-")}`;
-          values.name = prefix ? `${prefix}-${short}${suffix}` : `${short}${suffix}`;
+          const suffix =
+            tfName === "main" || tfName === "app" || tfName === "default"
+              ? ""
+              : `-${tfName.replace(/_/g, "-")}`;
+          values.name = prefix
+            ? `${prefix}-${short}${suffix}`
+            : `${short}${suffix}`;
           if (type === "azurerm_storage_account") {
-            const p = prefix.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 12);
+            const p = prefix
+              .replace(/[^a-z0-9]/gi, "")
+              .toLowerCase()
+              .slice(0, 12);
             const n = (tfName.replace(/[^a-z0-9]/gi, "") || "sa").slice(0, 6);
             values.name = `${p}${n}001`.toLowerCase().slice(0, 24);
           }
           if (type === "azurerm_container_registry") {
-            const p = prefix.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 30);
-            const n = tfName.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 10);
+            const p = prefix
+              .replace(/[^a-z0-9]/gi, "")
+              .toLowerCase()
+              .slice(0, 30);
+            const n = tfName
+              .replace(/[^a-z0-9]/gi, "")
+              .toLowerCase()
+              .slice(0, 10);
             values.name = `${p || "acr"}${n || "registry"}`.slice(0, 50);
           }
           if (type === "azurerm_container_app") {
@@ -140,7 +236,6 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
-        // Auto-wire Container Apps Environment / ACR / identity
         if (type === "azurerm_container_app") {
           const env = s.resources.find(
             (r) => r.type === "azurerm_container_app_environment"
@@ -250,24 +345,24 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 
       return id;
     },
-    []
+    [commit]
   );
 
   const updateResource = useCallback(
     (id: string, patch: Partial<ResourceInstance>) => {
-      setState((s) => ({
+      commit((s) => ({
         ...s,
         resources: s.resources.map((r) =>
           r.id === id ? { ...r, ...patch } : r
         ),
       }));
     },
-    []
+    [commit]
   );
 
   const updateResourceValue = useCallback(
     (id: string, key: string, value: unknown) => {
-      setState((s) => ({
+      commitValueEdit((s) => ({
         ...s,
         resources: s.resources.map((r) =>
           r.id === id
@@ -276,12 +371,12 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         ),
       }));
     },
-    []
+    [commitValueEdit]
   );
 
   const updateExistingValue = useCallback(
     (id: string, key: string, value: unknown) => {
-      setState((s) => ({
+      commitValueEdit((s) => ({
         ...s,
         resources: s.resources.map((r) =>
           r.id === id
@@ -293,59 +388,72 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         ),
       }));
     },
-    []
+    [commitValueEdit]
   );
 
-  const removeResource = useCallback((id: string) => {
-    setState((s) => {
-      const resources = s.resources
-        .filter((r) => r.id !== id)
-        .map((r) => {
-          const values = { ...r.values };
-          for (const [k, v] of Object.entries(values)) {
-            if (
-              typeof v === "object" &&
-              v !== null &&
-              "resourceId" in v &&
-              (v as { resourceId: string }).resourceId === id
-            ) {
-              delete values[k];
+  const removeResource = useCallback(
+    (id: string) => {
+      commit((s) => {
+        const resources = s.resources
+          .filter((r) => r.id !== id)
+          .map((r) => {
+            const values = { ...r.values };
+            for (const [k, v] of Object.entries(values)) {
+              if (
+                typeof v === "object" &&
+                v !== null &&
+                "resourceId" in v &&
+                (v as { resourceId: string }).resourceId === id
+              ) {
+                delete values[k];
+              }
             }
-          }
-          return { ...r, values };
-        });
-      return {
-        ...s,
-        resources,
-        selectedResourceId:
-          s.selectedResourceId === id ? null : s.selectedResourceId,
-      };
-    });
-  }, []);
-
+            return { ...r, values };
+          });
+        return {
+          ...s,
+          resources,
+          selectedResourceId:
+            s.selectedResourceId === id ? null : s.selectedResourceId,
+        };
+      });
+    },
+    [commit]
+  );
 
   const importResources = useCallback(
     (resources: ResourceInstance[], mode: "merge" | "replace") => {
-      setState((s) => {
+      commit((s) => {
         const next = mergeImportedResources(s.resources, resources, mode);
         return {
           ...s,
-          config: { ...s.config, starter: mode === "replace" ? "imported" : s.config.starter },
+          config: {
+            ...s.config,
+            starter: mode === "replace" ? "imported" : s.config.starter,
+          },
           resources: next,
           selectedResourceId: next[0]?.id ?? null,
         };
       });
     },
-    []
+    [commit]
   );
 
   const selectResource = useCallback((id: string | null) => {
-    setState((s) => ({ ...s, selectedResourceId: id }));
+    // Selection-only — not an undo step.
+    setHistory((h) => ({
+      ...h,
+      present: { ...h.present, selectedResourceId: id },
+    }));
   }, []);
 
   const value = useMemo<ProjectContextValue>(
     () => ({
       state,
+      canUndo: historyCanUndo(history),
+      canRedo: historyCanRedo(history),
+      undo,
+      redo,
       setConfig,
       applyStarter,
       addResource,
@@ -359,6 +467,9 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       state,
+      history,
+      undo,
+      redo,
       setConfig,
       applyStarter,
       addResource,

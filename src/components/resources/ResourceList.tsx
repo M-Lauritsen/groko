@@ -4,6 +4,7 @@ import { useProject } from "@/lib/store/project-context";
 import { getResourceType } from "@/lib/schema/resources";
 import { getUsedBy } from "@/lib/generate/deps";
 import { Card, SectionTitle, Badge, Button } from "@/components/ui/Field";
+import { UndoRedoControls } from "@/components/history/UndoRedoControls";
 
 export function ResourceList() {
   const { state, selectResource, removeResource } = useProject();
@@ -13,7 +14,10 @@ export function ResourceList() {
     <Card className="p-4 flex flex-col h-full min-h-0">
       <SectionTitle
         action={
-          <Badge tone="slate">{resources.length}</Badge>
+          <div className="flex items-center gap-2">
+            <UndoRedoControls compact />
+            <Badge tone="slate">{resources.length}</Badge>
+          </div>
         }
       >
         Project resources

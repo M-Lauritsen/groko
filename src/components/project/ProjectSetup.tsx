@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useProject } from "@/lib/store/project-context";
 import { STARTERS } from "@/lib/schema/starters";
 import { AZURE_LOCATIONS } from "@/lib/schema/types";
+import { shouldConfirmStarterApply } from "@/lib/store/starter-apply";
 import {
   Label,
   TextInput,
@@ -37,12 +38,15 @@ export function ProjectSetup() {
   }
 
   function onStarterClick(id: string) {
-    if (state.resources.length > 0 && id !== config.starter) {
+    if (shouldConfirmStarterApply(state.resources.length)) {
       setConfirmStarter(id);
     } else {
-      applyStarter(id);
+      applyStarter(id, "replace");
     }
   }
+
+  const pendingLabel =
+    STARTERS.find((s) => s.id === confirmStarter)?.label ?? confirmStarter;
 
   return (
     <div className="space-y-6">
@@ -143,8 +147,8 @@ export function ProjectSetup() {
       <Card className="p-5">
         <SectionTitle>Starters</SectionTitle>
         <p className="text-sm text-slate-500 mb-4">
-          Scaffold a common topology. Applying a starter replaces your current
-          resource list.
+          Scaffold a common topology. On an empty canvas the starter applies
+          immediately; if you already have resources you can replace or merge.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           {STARTERS.map((s) => {
@@ -184,24 +188,45 @@ export function ProjectSetup() {
         </div>
 
         {confirmStarter && (
-          <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-700 p-4">
-            <p className="text-sm text-amber-900 dark:text-amber-200 mb-3">
-              Applying a starter will replace your {state.resources.length}{" "}
-              current resource(s). Continue?
+          <div
+            role="dialog"
+            aria-labelledby="starter-confirm-title"
+            className="mt-4 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-700 p-4"
+          >
+            <p
+              id="starter-confirm-title"
+              className="text-sm text-amber-900 dark:text-amber-200 mb-1 font-medium"
+            >
+              Apply starter “{pendingLabel}”?
             </p>
-            <div className="flex gap-2">
+            <p className="text-sm text-amber-800 dark:text-amber-300/90 mb-3">
+              Your canvas already has {state.resources.length} resource(s).
+              Choose how to apply the starter — nothing is changed until you
+              pick an option.
+            </p>
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="primary"
                 size="sm"
                 onClick={() => {
-                  applyStarter(confirmStarter);
+                  applyStarter(confirmStarter, "replace");
                   setConfirmStarter(null);
                 }}
               >
-                Replace & apply
+                Replace all
               </Button>
               <Button
                 variant="secondary"
+                size="sm"
+                onClick={() => {
+                  applyStarter(confirmStarter, "merge");
+                  setConfirmStarter(null);
+                }}
+              >
+                Merge with starter
+              </Button>
+              <Button
+                variant="ghost"
                 size="sm"
                 onClick={() => setConfirmStarter(null)}
               >

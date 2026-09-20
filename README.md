@@ -81,13 +81,18 @@ Edit `environments/backend.*.hcl` (`storage_account_name`, etc.) and fill `CHANG
 | `ca_ingress_external` | true | true | false |
 | `naming_prefix` | `*-dev` | `*-stg` | `*-prd` |
 
+## Undo & safer starters
+
+- **Undo / Redo** — header and resource-list controls, plus `Cmd/Ctrl+Z` and `Shift+Cmd/Ctrl+Z` (or `Ctrl+Y`). History keeps ~40 snapshots of resources + selection; value typing is debounced (~300ms) so undo is not character-by-character. Snapshots cover add/remove, value edits, use-existing toggles, import merge/replace, and starter apply.
+- **Starter apply** — empty canvas applies immediately. If resources already exist, a confirm offers **Replace all**, **Merge with starter**, or **Cancel** (no silent wipe).
+
 ## Architecture
 
 ```
 src/lib/schema/     # ResourceTypeDef catalogue + starters
 src/lib/generate/   # HCL emitters, module grouping, ZIP
 src/lib/import/     # Client-side HCL parse → ResourceInstance[]
-src/lib/store/      # React project state
+src/lib/store/      # React project state + undo history + starter apply
 src/components/     # Setup / catalogue / forms / export
 scripts/test-generate.ts
 ```
@@ -107,5 +112,4 @@ Containers + Identity: `azurerm_container_registry`, `azurerm_user_assigned_iden
 - ACR private endpoint / private DNS not modeled (CAE VNet integration is).
 - System-assigned identity + AcrPull role assignment is not auto-wired (user-assigned path is).
 - Module boundaries are fixed groupings.
-- No undo/history; starter apply replaces the list.
 - Terraform import is best-effort (not full HCL2); modules/for_each/complex expressions are skipped.

@@ -9,6 +9,7 @@ import { ResourceForm } from "@/components/resources/ResourceForm";
 import { ExportPanel } from "@/components/export/ExportPanel";
 import { Button, Badge } from "@/components/ui/Field";
 import { ImportTerraform } from "@/components/project/ImportTerraform";
+import { UndoRedoControls, UndoRedoKeyboard } from "@/components/history/UndoRedoControls";
 
 type MainTab = "builder" | "export" | "setup";
 
@@ -17,6 +18,7 @@ function ShellInner() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-100 dark:bg-slate-950">
+      <UndoRedoKeyboard />
       <header className="sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
@@ -58,6 +60,7 @@ function ShellInner() {
           </nav>
 
           <div className="hidden sm:flex items-center gap-2">
+            <UndoRedoControls compact />
             <ImportTerraform
               compact
               onImported={() => setTab("builder")}
