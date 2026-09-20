@@ -17,6 +17,8 @@ import { tierShortLabel } from '@/lib/schema/environments';
 import { normalizeScope, resourcesVisibleInEnv } from '@/lib/schema/environments';
 import { TierBadge } from '@/components/project/TierBadge';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { ResourceGuide } from '@/components/resources/ResourceGuide';
+import { ProjectPersistence } from '@/components/project/ProjectPersistence';
 
 type MainTab = 'environment' | 'builder' | 'export';
 type EnvironmentView = 'overview' | 'setup' | 'environments';
@@ -71,8 +73,9 @@ function ThemeToggle() {
 
 function ShellInner() {
 	const [tab, setTab] = useState<MainTab>('environment');
-	const [environmentView, setEnvironmentView] = useState<EnvironmentView>('overview');
+	const [environmentView, setEnvironmentView] = useState<EnvironmentView>('setup');
 	const [resourcesView, setResourcesView] = useState<ResourcesViewMode>('list');
+	const [guideOpen, setGuideOpen] = useState(false);
 	const { state, setActiveEnvironment } = useProject();
 
 	const activeId = state.activeEnvironmentId || state.environments[0]?.id || 'dev';
@@ -121,6 +124,18 @@ function ShellInner() {
 					/>
 
 					<ThemeToggle />
+					<ProjectPersistence />
+					<Button
+						variant="secondary"
+						size="sm"
+						onClick={() => setGuideOpen(true)}>
+						<span className="hidden sm:inline">Resource guide</span>
+						<span
+							className="sm:hidden"
+							aria-hidden>
+							Guide
+						</span>
+					</Button>
 					<div className="hidden sm:flex items-center gap-2">
 						<UndoRedoControls compact />
 						<ImportTerraform
@@ -323,6 +338,8 @@ function ShellInner() {
 					</div>
 				)}
 			</main>
+
+			{guideOpen && <ResourceGuide onClose={() => setGuideOpen(false)} />}
 
 			<footer className="border-t border-slate-200 dark:border-slate-800 py-3 text-center text-[11px] text-slate-400">
 				Azure TF Builder · client-side generation · no secrets leave your browser · azurerm {'~>'} 4.0

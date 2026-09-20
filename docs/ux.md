@@ -4,14 +4,14 @@ Domain-first copy for groko. Speak **Environments** and **resources**; Terraform
 
 ## Domain vocabulary
 
-| Say | Avoid in primary UI |
-|-----|---------------------|
-| Environment, tier (Dev / Staging / Prod) | “workspace”, raw backend HCL as the story |
-| Resource, catalogue, Shared vs env-scoped | “module instance” as the user’s object |
-| Existing \| Create | `data.` / `resource` as the primary label |
-| Review changes, folder map, Download ZIP | Leading with a `.tf` file tree |
-| Shared hub DNS · owned by {Environment} | Implying Prefer Existing moves ownership |
-| Add from catalogue / Import existing | “Paste HCL” as the empty-state CTA |
+| Say                                       | Avoid in primary UI                       |
+| ----------------------------------------- | ----------------------------------------- |
+| Environment, tier (Dev / Staging / Prod)  | “workspace”, raw backend HCL as the story |
+| Resource, catalogue, Shared vs env-scoped | “module instance” as the user’s object    |
+| Existing \| Create                        | `data.` / `resource` as the primary label |
+| Review changes, folder map, Download ZIP  | Leading with a `.tf` file tree            |
+| Shared hub DNS · owned by {Environment}   | Implying Prefer Existing moves ownership  |
+| Add from catalogue / Import existing      | “Paste HCL” as the empty-state CTA        |
 
 Catalogue and forms use **human labels** (Resource Group, Private DNS Zone, Linux Function App). Terraform type ids (`azurerm_*`) may appear as muted secondary text — never as the primary row title.
 
@@ -19,9 +19,12 @@ Catalogue and forms use **human labels** (Resource Group, Private DNS Zone, Linu
 
 **Environment → Resources → Export**
 
+Environment opens on **Project setup**. The first screen establishes project identity, region, naming, tags, starters, and the active Tier before the user configures resources. Project saving is a separate client-side utility: browser drafts and portable project files preserve the domain model, while Download ZIP remains the infrastructure export action.
+
 - **Graph** is **List | Graph** on Resources — **not** a fourth main tab.
 - **Import existing** lives on **Environment** (Upload Terraform is the same edge action).
 - Export default is **Review changes**; Live HCL / Files are secondary.
+- Resource guidance is a utility surface available from the header and resource workflow; it is not a fourth main step.
 
 ## Existing | Create
 
@@ -43,15 +46,15 @@ Hub DNS / VNet link **owner** is stamped when the hub link is created. Toggling 
 
 Headed domain copy; no `.tf` / Terraform jargon.
 
-- List: *No resources in this Environment yet.* → primary **Add from catalogue**, secondary **Import existing**.
-- Graph: *Nothing to show for this tier.* → same CTAs (primary opens catalogue drawer).
+- List: _No resources in this Environment yet._ → primary **Add from catalogue**, secondary **Import existing**.
+- Graph: _Nothing to show for this tier._ → same CTAs (primary opens catalogue drawer).
 - If resources exist but none for Shared + active tier, explain that other Environments hold them and suggest switching tier.
 
 ## Accessibility
 
 - Keyboard can complete Environment → Import review/confirm → Resources → List|Graph selection sync → Graph **+ Add** → Existing|Create → Export Review → Download (or Leave unmapped confirm).
 - **Esc** cancels confirms (starter, import, Prod friction, Change owner, Leave unmapped, catalogue drawer).
-- Focus trap on destructive dialogs; Prod dialog shows Tier badge and title *This Environment is Production*.
+- Focus trap on destructive dialogs; Prod dialog shows Tier badge and title _This Environment is Production_.
 - Catalogue search has a visible **Search resources** label; add controls are always visible (no hover-only **+**).
 - Tier badge remains visible on Resources and Export.
 
