@@ -101,7 +101,7 @@ export function ProjectSetup() {
   return (
     <div className="space-y-6">
       <Card className="p-5">
-        <SectionTitle>Project settings</SectionTitle>
+        <SectionTitle>Environment</SectionTitle>
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <Label htmlFor="proj-name" required>
