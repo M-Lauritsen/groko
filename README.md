@@ -37,7 +37,7 @@ Not a perfect round-trip — nested blocks and complex HCL are best-effort.
 ## How export works
 
 1. **Environment** — project name/region/prefix/tags + starters, plus required **Dev | Staging | Prod** active-tier control and env knobs. Setup is folded into this step. Tier badge stays visible in header / Resources / Export after you leave this step.
-2. **Resources** — each instance is **Shared** or **scoped to one environment**. Forms open with **Existing | Create** (Private DNS defaults Existing). Reference pickers only allow shared + same-env targets. Catalogue shows human labels (no raw `azurerm_*` on primary rows).
+2. **Resources** — each instance is **Shared** or **scoped to one environment**. Toggle **List | Graph** (not a fourth main tab): Graph reuses the Environment ref graph (`deps.ts`) for nodes/edges, omits cross-env-blocked edges, and shares `selectedResourceId` with List so the same **ResourceForm** opens in the side panel. Forms open with **Existing | Create** (Private DNS defaults Existing). Reference pickers only allow shared + same-env targets. Catalogue shows human labels (no raw `azurerm_*` on primary rows).
 3. **ACR auth** — per app: **Managed identity (recommended)** or Admin credentials (lab fallback).
 4. **Container App extras** — list editors for env vars and app secrets (plain → sensitive var, or Key Vault ref + optional Secrets User role); optional HTTP scale rule (`concurrent_requests`).
 5. **Export** — modular ZIP driven by Environment objects (HCL only here / Import):
@@ -96,7 +96,7 @@ src/lib/schema/     # ResourceTypeDef catalogue + starters
 src/lib/generate/   # HCL emitters, module grouping, ZIP
 src/lib/import/     # Client-side HCL parse → ResourceInstance[]
 src/lib/store/      # React project state + undo history + starter apply
-src/components/     # Environment / catalogue / forms / export
+src/components/     # Environment / catalogue / forms / dependency graph / export
 scripts/test-generate.ts
 ```
 
@@ -148,11 +148,12 @@ Keyboard-only smoke path after `npm run dev`:
 1. **Environment** — Tab to **Dev | Staging | Prod**; change tier with arrows; confirm **Tier:** badge updates. Fill project name; Tab to a starter; Enter. If resources already exist, confirm dialog traps focus; **Esc** cancels.
 2. **Import existing** (still on Environment) — Tab to **Upload Terraform**; choose `.tf` / zip. Review table shows domain labels (not raw HCL). Arrow/Tab to toggle **Existing | Create** and scope Shared/env. Continue → **Replace all** / **Merge into current** / **Cancel** (Esc back). Lands on **Resources** with an imported instance selected.
 3. **Continue to resources** — Header shows **Tier:** badge. Catalogue search has a visible **Search resources** label; rows show human labels + always-visible **+** (no hover-only add).
-4. Add **Linux Function App** (short card) → form opens with **Existing | Create** at top; toggle both modes. Add **Private DNS Zone** → defaults **Existing**.
-5. Toggle Existing/Create; fill an existing id/name field — hints use plain language (no `data.azurerm_…`).
-6. **Export** — Tier badge still visible; open Live HCL / Files; Download ZIP. HCL remains edge-only (Export/Import).
+4. **List | Graph** — Tab to the Resources view toggle; switch to **Graph**. Nodes are shared + active-env resources (Existing/Create + Shared vs env styling). Arrow/Tab to a node; **Enter** selects — the same **ResourceForm** (mode, scope, fields, deps/used-by) opens in the side panel (one selection model). Switch back to **List**; selection stays. Cross-env-blocked refs are not drawn as valid edges. Undo still works.
+5. Add **Linux Function App** (short card) → form opens with **Existing | Create** at top; toggle both modes. Add **Private DNS Zone** → defaults **Existing**.
+6. Toggle Existing/Create; fill an existing id/name field — hints use plain language (no `data.azurerm_…`).
+7. **Export** — Tier badge still visible; open Live HCL / Files; Download ZIP. HCL remains edge-only (Export/Import).
 
-Acceptance: keyboard can complete Environment → import review/confirm → Resources → add resource → toggle existing/create → export; Import is not a fourth main tab; no new catalogue types.
+Acceptance: keyboard can complete Environment → import review/confirm → Resources → List|Graph selection sync → add resource → toggle existing/create → export; Import / Graph are not a fourth main tab; no new catalogue types; Graph reuses ResourceForm (no second detail schema).
 
 ## Known gaps
 

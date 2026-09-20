@@ -7,6 +7,10 @@ import { EnvironmentsPanel } from "@/components/project/EnvironmentsPanel";
 import { Catalogue } from "@/components/resources/Catalogue";
 import { ResourceList } from "@/components/resources/ResourceList";
 import { ResourceForm } from "@/components/resources/ResourceForm";
+import {
+  DependencyGraph,
+  type ResourcesViewMode,
+} from "@/components/resources/DependencyGraph";
 import { ExportPanel } from "@/components/export/ExportPanel";
 import { Button, Badge } from "@/components/ui/Field";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
@@ -26,6 +30,8 @@ const MAIN_TABS: { id: MainTab; label: string }[] = [
 
 function ShellInner() {
   const [tab, setTab] = useState<MainTab>("environment");
+  const [resourcesView, setResourcesView] =
+    useState<ResourcesViewMode>("list");
   const { state, setActiveEnvironment } = useProject();
 
   const activeId =
@@ -121,16 +127,34 @@ function ShellInner() {
           </div>
         )}
 
-        {tab === "builder" && (
+        {tab === "builder" && resourcesView === "list" && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[calc(100vh-8.5rem)] min-h-[520px]">
             <div className="lg:col-span-3 min-h-0">
-              <ResourceList />
+              <ResourceList
+                viewMode={resourcesView}
+                onViewModeChange={setResourcesView}
+              />
             </div>
             <div className="lg:col-span-5 min-h-0">
               <ResourceForm />
             </div>
             <div className="lg:col-span-4 min-h-0">
               <Catalogue />
+            </div>
+          </div>
+        )}
+
+        {tab === "builder" && resourcesView === "graph" && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[calc(100vh-8.5rem)] min-h-[520px]">
+            <div className="lg:col-span-7 min-h-0">
+              <DependencyGraph
+                viewMode={resourcesView}
+                onViewModeChange={setResourcesView}
+              />
+            </div>
+            <div className="lg:col-span-5 min-h-0">
+              {/* Same ResourceForm + selectedResourceId — no parallel detail schema */}
+              <ResourceForm />
             </div>
           </div>
         )}

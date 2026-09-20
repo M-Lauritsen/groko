@@ -52,8 +52,9 @@ export function ResourceForm() {
             Select a resource
           </h3>
           <p className="text-sm text-slate-500">
-            Choose one from the project list, or add from the catalogue. Use
-            reference pickers to wire dependencies between resources.
+            Choose one from the List or Graph view, or add from the catalogue.
+            Selection is shared across views. Use reference pickers to wire
+            dependencies between resources.
           </p>
         </div>
       </Card>

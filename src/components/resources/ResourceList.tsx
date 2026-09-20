@@ -14,8 +14,18 @@ import { Card, SectionTitle, Badge, Button } from "@/components/ui/Field";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { UndoRedoControls } from "@/components/history/UndoRedoControls";
 import { TierBadge } from "@/components/project/TierBadge";
+import {
+  ResourcesViewToggle,
+  type ResourcesViewMode,
+} from "./DependencyGraph";
 
-export function ResourceList() {
+export function ResourceList({
+  viewMode = "list",
+  onViewModeChange,
+}: {
+  viewMode?: ResourcesViewMode;
+  onViewModeChange?: (v: ResourcesViewMode) => void;
+} = {}) {
   const { state, selectResource, removeResource, setActiveEnvironment } =
     useProject();
   const { resources, selectedResourceId, environments, activeEnvironmentId } =
@@ -38,7 +48,13 @@ export function ResourceList() {
     <Card className="p-4 flex flex-col h-full min-h-0">
       <SectionTitle
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {onViewModeChange && (
+              <ResourcesViewToggle
+                value={viewMode}
+                onChange={onViewModeChange}
+              />
+            )}
             <UndoRedoControls compact />
             <TierBadge />
             <Badge tone="slate">{visible.length}</Badge>
