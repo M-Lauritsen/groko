@@ -373,9 +373,11 @@ export function ResourceForm() {
               <Badge tone="emerald">create</Badge>
             )}
           </div>
-          <p className="text-xs text-slate-400">
-            Local name: <code className="font-mono">{resource.tfName}</code>
-          </p>
+          {resource.useExisting && (
+            <p className="text-xs text-slate-400">
+              Local name: <code className="font-mono">{resource.tfName}</code>
+            </p>
+          )}
         </div>
         <Button
           variant="danger"
@@ -387,38 +389,40 @@ export function ResourceForm() {
       </div>
 
       <div className="space-y-4 mb-5">
-        <div>
-          <Label htmlFor="tf-name" required>
-            Local name
-          </Label>
-          <TextInput
-            id="tf-name"
-            value={resource.tfName}
-            onChange={(e) => {
-              const cleaned = e.target.value
-                .replace(/[^a-zA-Z0-9_]/g, "_")
-                .replace(/^(\d)/, "_$1");
-              updateResource(resource.id, { tfName: cleaned || "app" });
-            }}
-          />
-          {state.resources.some(
-            (r) =>
-              r.id !== resource.id &&
-              r.type === resource.type &&
-              r.tfName === resource.tfName
-          ) && (
-            <p className="mt-1 text-xs text-rose-600">
-              Duplicate local name — another {def.label} already uses
-              &quot;{resource.tfName}&quot;. Rename to avoid collisions.
-            </p>
-          )}
-          <Hint>
-            Short id used when wiring references
-            {resource.type === "azurerm_container_app" &&
-              " — add more from the catalogue (app, app_2, …)"}
-            .
-          </Hint>
-        </div>
+        {resource.useExisting && (
+          <div>
+            <Label htmlFor="tf-name" required>
+              Local name
+            </Label>
+            <TextInput
+              id="tf-name"
+              value={resource.tfName}
+              onChange={(e) => {
+                const cleaned = e.target.value
+                  .replace(/[^a-zA-Z0-9_]/g, "_")
+                  .replace(/^(\d)/, "_$1");
+                updateResource(resource.id, { tfName: cleaned || "app" });
+              }}
+            />
+            {state.resources.some(
+              (r) =>
+                r.id !== resource.id &&
+                r.type === resource.type &&
+                r.tfName === resource.tfName
+            ) && (
+              <p className="mt-1 text-xs text-rose-600">
+                Duplicate local name — another {def.label} already uses
+                &quot;{resource.tfName}&quot;. Rename to avoid collisions.
+              </p>
+            )}
+            <Hint>
+              Short id used when wiring references
+              {resource.type === "azurerm_container_app" &&
+                " — add more from the catalogue (app, app_2, …)"}
+              .
+            </Hint>
+          </div>
+        )}
 
         <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
           <Label>Scope</Label>
@@ -484,24 +488,54 @@ export function ResourceForm() {
             {basicFields.map((f) => renderField(f))}
           </div>
 
-          {advancedFields.length > 0 && (
-            <div className="mb-4">
-              <button
-                type="button"
-                className="text-sm font-medium text-sky-600 hover:text-sky-500 mb-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
-                onClick={() => setShowAdvanced((s) => !s)}
-                aria-expanded={showAdvanced}
-              >
-                {showAdvanced ? "▾ Hide advanced" : "▸ Show advanced"} (
-                {advancedFields.length})
-              </button>
-              {showAdvanced && (
-                <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 p-4">
-                  {advancedFields.map((f) => renderField(f))}
+          <div className="mb-4">
+            <button
+              type="button"
+              className="text-sm font-medium text-sky-600 hover:text-sky-500 mb-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
+              onClick={() => setShowAdvanced((s) => !s)}
+              aria-expanded={showAdvanced}
+            >
+              {showAdvanced ? "▾ Hide advanced" : "▸ Show advanced"} (
+              {advancedFields.length + 1})
+            </button>
+            {showAdvanced && (
+              <div className="space-y-4 rounded-lg border border-slate-200 dark:border-slate-700 p-4">
+                <div>
+                  <Label htmlFor="tf-name" required>
+                    Local name
+                  </Label>
+                  <TextInput
+                    id="tf-name"
+                    value={resource.tfName}
+                    onChange={(e) => {
+                      const cleaned = e.target.value
+                        .replace(/[^a-zA-Z0-9_]/g, "_")
+                        .replace(/^(\d)/, "_$1");
+                      updateResource(resource.id, { tfName: cleaned || "app" });
+                    }}
+                  />
+                  {state.resources.some(
+                    (r) =>
+                      r.id !== resource.id &&
+                      r.type === resource.type &&
+                      r.tfName === resource.tfName
+                  ) && (
+                    <p className="mt-1 text-xs text-rose-600">
+                      Duplicate local name — another {def.label} already uses
+                      &quot;{resource.tfName}&quot;. Rename to avoid collisions.
+                    </p>
+                  )}
+                  <Hint>
+                    Short id used when wiring references
+                    {resource.type === "azurerm_container_app" &&
+                      " — add more from the catalogue (app, app_2, …)"}
+                    .
+                  </Hint>
                 </div>
-              )}
-            </div>
-          )}
+                {advancedFields.map((f) => renderField(f))}
+              </div>
+            )}
+          </div>
         </>
       )}
 
