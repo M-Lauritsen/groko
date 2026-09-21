@@ -1,6 +1,6 @@
 # User guide
 
-Walk: **open app → Environment → Resources → Export**. Domain language throughout — you work with Environments and resources, not `.tf` trees.
+Walk: **open app → Project setup → Resources → Export**. Domain language throughout — you work with Environments and resources, not `.tf` trees.
 
 ## Open the app
 
@@ -11,13 +11,17 @@ docker compose up --build
 
 Open [http://localhost:3000](http://localhost:3000). No login.
 
-Main steps in the header: **1. Environment → 2. Resources → 3. Export**. The active **Tier** badge (Dev / Staging / Prod) stays visible after Environment.
+Main steps in the header: **1. Environment → 2. Resources → 3. Export**. Environment opens on **Project setup** so the project name, region, naming prefix, tags, starter, and active Tier are established before resources are configured. The active **Tier** badge (Dev / Staging / Prod) stays visible after Environment.
+
+The header also includes a **Resource guide** with searchable descriptions, usage guidance, security considerations, recommendations, module grouping, and build-stage context. It is a utility surface, not a fourth main step.
+
+Use the **Project** menu to save a named browser draft or download a portable `.groko.json` project file. Open drafts and imported project files restore the editable domain model and start a fresh undo history. Project files are separate from **Download ZIP**, which generates infrastructure output for deployment.
 
 ---
 
 ## 1. Environment
 
-Set up the project and the active tier before you add resources.
+Project setup is the first Environment surface. Set up the project and active tier before you add resources; the overview and environment management views remain available as secondary views.
 
 ### Project + tier
 
@@ -31,7 +35,7 @@ Apply a starter to seed the graph (Blank, Web App + SQL, Storage + Function App,
 
 - **Empty canvas + non-Prod** — applies immediately.
 - **Resources already present** — confirm **Replace all**, **Merge with starter**, or **Cancel** (Esc cancels; no silent wipe).
-- **Prod** — always hits **Prod friction** (*This Environment is Production*), even on an empty canvas. Primary **Replace on Prod** (danger); Esc cancels.
+- **Prod** — always hits **Prod friction** (_This Environment is Production_), even on an empty canvas. Primary **Replace on Prod** (danger); Esc cancels.
 
 ### Import existing
 
@@ -71,10 +75,10 @@ Toggle **List | Graph** on Resources (not a fourth main tab). Both share the sam
 
 When nothing is visible for Shared + active tier:
 
-| View | Heading | Primary | Secondary |
-|------|---------|---------|-----------|
-| List | *No resources in this Environment yet.* | **Add from catalogue** (focuses catalogue search) | **Import existing** → Environment |
-| Graph | *Nothing to show for this tier.* | **Add from catalogue** (opens drawer) | **Import existing** → Environment |
+| View  | Heading                                 | Primary                                           | Secondary                         |
+| ----- | --------------------------------------- | ------------------------------------------------- | --------------------------------- |
+| List  | _No resources in this Environment yet._ | **Add from catalogue** (focuses catalogue search) | **Import existing** → Environment |
+| Graph | _Nothing to show for this tier._        | **Add from catalogue** (opens drawer)             | **Import existing** → Environment |
 
 Tier badge remains visible.
 
@@ -94,7 +98,7 @@ When a Private DNS zone is **Shared + Use existing** (hub):
 - Badge: **Shared hub DNS · owned by {Environment}**
 - VNet links: **VNet link · Shared hub · owned by {Environment}**
 
-Owner is the Environment that created the hub link (stamped at create). **Prefer Existing never transfers ownership.** Read-only owner chip; secondary **Change owner…** confirms *Move hub ownership to {Environment}? Other Environments keep using this zone.* (Esc cancels). Optional Environments-panel callout when the active tier reuses a hub it does not own.
+Owner is the Environment that created the hub link (stamped at create). **Prefer Existing never transfers ownership.** Read-only owner chip; secondary **Change owner…** confirms _Move hub ownership to {Environment}? Other Environments keep using this zone._ (Esc cancels). Optional Environments-panel callout when the active tier reuses a hub it does not own.
 
 ### Undo
 
@@ -159,14 +163,14 @@ Prod confirms for starter/import Replace|Merge stay on **Environment**. Export R
 
 ## Catalogue highlights (what you can model)
 
-| Area | Examples |
-|------|----------|
-| Networking | VNet, Subnet (App Environments delegation), NSG, Public IP, NIC |
-| Private networking | Private Endpoint (ACR / Key Vault / SQL), Private DNS Zone, VNet link |
-| Containers | ACR, User-assigned identity, AcrPull / KV Secrets User roles, Log Analytics, Container App Environment, Container App |
-| Apps | Service Plan, Linux Web App, Linux Function App, Application Insights |
-| Data / security | Storage Account, Key Vault, SQL Server + Database |
-| Compute | Linux VM |
+| Area               | Examples                                                                                                              |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| Networking         | VNet, Subnet (App Environments delegation), NSG, Public IP, NIC                                                       |
+| Private networking | Private Endpoint (ACR / Key Vault / SQL), Private DNS Zone, VNet link                                                 |
+| Containers         | ACR, User-assigned identity, AcrPull / KV Secrets User roles, Log Analytics, Container App Environment, Container App |
+| Apps               | Service Plan, Linux Web App, Linux Function App, Application Insights                                                 |
+| Data / security    | Storage Account, Key Vault, SQL Server + Database                                                                     |
+| Compute            | Linux VM                                                                                                              |
 
 Private DNS + VNet link typically **Shared**; PE can be shared or env-scoped. Function App starter wires Insights on **dev** by default.
 

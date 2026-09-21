@@ -7,6 +7,8 @@ import {
   type ExportReviewItem,
 } from "@/lib/generate/export-map";
 import { Badge, Hint } from "@/components/ui/Field";
+import { APP_GUIDANCE } from "@/lib/help/assistance";
+import { InfoTag } from "@/components/ui/InfoTag";
 
 function ReviewList({
   title,
@@ -87,7 +89,7 @@ export function ReviewChangesPanel({
         </Hint>
       </div>
 
-      <div className="flex flex-wrap gap-2" aria-label="Export change counts">
+      <div className="flex flex-wrap items-center gap-2" aria-label="Export change counts">
         <Badge tone="emerald">{counts.adds} add{counts.adds === 1 ? "" : "s"}</Badge>
         <Badge tone="violet">
           {counts.updates} update{counts.updates === 1 ? "" : "s"}
@@ -99,6 +101,16 @@ export function ReviewChangesPanel({
           {counts.orphans} orphan{counts.orphans === 1 ? "" : "s"}
         </Badge>
         <Badge tone="slate">{counts.total} total</Badge>
+        <InfoTag title="assistance" variant={counts.orphans > 0 ? "warning" : "success"}>
+          <div className="space-y-2">
+            {APP_GUIDANCE.map((guide) => (
+              <div key={guide.title}>
+                <div className="font-semibold text-slate-800 dark:text-slate-100">{guide.title}</div>
+                <p>{guide.body}</p>
+              </div>
+            ))}
+          </div>
+        </InfoTag>
       </div>
 
       {counts.orphans > 0 && (

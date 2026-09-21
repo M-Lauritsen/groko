@@ -99,8 +99,10 @@ export function Catalogue({
 													{r.icon}
 												</span>
 												<div className="min-w-0 flex-1">
-													<div className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">
-														{r.label}
+													<div className="flex items-center justify-between gap-2">
+														<div className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">
+															{r.label}
+														</div>
 													</div>
 													<div className="text-[11px] text-slate-400 truncate">
 														{r.description} - {r.category}

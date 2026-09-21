@@ -27,26 +27,27 @@ import {
   tierShortLabel,
 } from "@/lib/schema/environments";
 import {
-  HUB_OWNERSHIP_COPY,
-  hubOwnerDisplayLabel,
-  hubOwnershipBadgeText,
-  isHubDnsType,
-  linkedEnvCountBadge,
-} from "@/lib/store/hub-dns-ownership";
-import { ReferencePicker } from "./ReferencePicker";
-import { EnvVarsEditor, AppSecretsEditor } from "./ContainerAppExtras";
+	HUB_OWNERSHIP_COPY,
+	hubOwnerDisplayLabel,
+	hubOwnershipBadgeText,
+	isHubDnsType,
+	linkedEnvCountBadge,
+} from '@/lib/store/hub-dns-ownership';
+import { ReferencePicker } from './ReferencePicker';
+import { EnvVarsEditor, AppSecretsEditor } from './ContainerAppExtras';
 import {
-  Card,
-  SectionTitle,
-  Label,
-  TextInput,
-  SelectInput,
-  Checkbox,
-  Hint,
-  Button,
-  Badge,
-} from "@/components/ui/Field";
-import { SegmentedControl } from "@/components/ui/SegmentedControl";
+	Card,
+	SectionTitle,
+	Label,
+	TextInput,
+	SelectInput,
+	Checkbox,
+	Hint,
+	Button,
+	Badge,
+} from '@/components/ui/Field';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { RESOURCE_ASSISTANCE } from '@/lib/help/assistance';
 
 export function ResourceForm() {
   const {
@@ -796,156 +797,146 @@ export function ResourceForm() {
 }
 
 function HubOwnershipPanel({
-  resource,
-  resources,
-  environments,
-  reassignOpen,
-  reassignTargetId,
-  onOpenReassign,
-  onCancelReassign,
-  onTargetChange,
-  onConfirmReassign,
+	resource,
+	resources,
+	environments,
+	reassignOpen,
+	reassignTargetId,
+	onOpenReassign,
+	onCancelReassign,
+	onTargetChange,
+	onConfirmReassign,
 }: {
-  resource: import("@/lib/schema/types").ResourceInstance;
-  resources: import("@/lib/schema/types").ResourceInstance[];
-  environments: import("@/lib/schema/types").Environment[];
-  reassignOpen: boolean;
-  reassignTargetId: string | null;
-  onOpenReassign: () => void;
-  onCancelReassign: () => void;
-  onTargetChange: (id: string) => void;
-  onConfirmReassign: () => void;
+	resource: import('@/lib/schema/types').ResourceInstance;
+	resources: import('@/lib/schema/types').ResourceInstance[];
+	environments: import('@/lib/schema/types').Environment[];
+	reassignOpen: boolean;
+	reassignTargetId: string | null;
+	onOpenReassign: () => void;
+	onCancelReassign: () => void;
+	onTargetChange: (id: string) => void;
+	onConfirmReassign: () => void;
 }) {
-  const badge =
-    hubOwnershipBadgeText(resource, resources, environments) ??
-    HUB_OWNERSHIP_COPY.sharedHubDns;
-  const ownerLabel = hubOwnerDisplayLabel(resource, resources, environments);
-  const linked = linkedEnvCountBadge(resource, resources, environments);
-  const targetEnv = reassignTargetId
-    ? environmentById(environments, reassignTargetId)
-    : undefined;
+	const badge = hubOwnershipBadgeText(resource, resources, environments) ?? HUB_OWNERSHIP_COPY.sharedHubDns;
+	const ownerLabel = hubOwnerDisplayLabel(resource, resources, environments);
+	const linked = linkedEnvCountBadge(resource, resources, environments);
+	const targetEnv = reassignTargetId ? environmentById(environments, reassignTargetId) : undefined;
 
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const titleId = useId();
-  const bodyId = useId();
+	const dialogRef = useRef<HTMLDivElement>(null);
+	const titleId = useId();
+	const bodyId = useId();
 
-  useEffect(() => {
-    if (!reassignOpen) return;
-    const root = dialogRef.current;
-    if (!root) return;
-    const focusables = () =>
-      Array.from(
-        root.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        )
-      ).filter((el) => !el.hasAttribute("disabled") && el.tabIndex !== -1);
-    focusables()[0]?.focus();
+	useEffect(() => {
+		if (!reassignOpen) return;
+		const root = dialogRef.current;
+		if (!root) return;
+		const focusables = () =>
+			Array.from(
+				root.querySelectorAll<HTMLElement>(
+					'button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+				),
+			).filter((el) => !el.hasAttribute('disabled') && el.tabIndex !== -1);
+		focusables()[0]?.focus();
 
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        onCancelReassign();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [reassignOpen, onCancelReassign]);
+		function onKeyDown(e: KeyboardEvent) {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				e.stopPropagation();
+				onCancelReassign();
+			}
+		}
+		document.addEventListener('keydown', onKeyDown, true);
+		return () => document.removeEventListener('keydown', onKeyDown, true);
+	}, [reassignOpen, onCancelReassign]);
 
-  return (
-    <div className="rounded-lg border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/20 p-3 space-y-2">
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-medium text-violet-800 dark:text-violet-200">
-          Hub ownership
-        </span>
-        <Badge tone="violet">{badge}</Badge>
-        {linked && <Badge tone="slate">{linked}</Badge>}
-      </div>
-      <p className="text-[11px] text-violet-700/90 dark:text-violet-300/90">
-        {HUB_OWNERSHIP_COPY.ownerReadOnlyHint}
-        {ownerLabel ? (
-          <>
-            {" "}
-            Current owner: <strong>{ownerLabel}</strong> (read-only).
-          </>
-        ) : (
-          <> No owner stamped yet — reassign to set one.</>
-        )}
-      </p>
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        onClick={onOpenReassign}
-      >
-        {HUB_OWNERSHIP_COPY.changeOwnerLabel}
-      </Button>
+	return (
+		<div className="rounded-lg border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/20 p-3 space-y-2">
+			<div className="flex items-center gap-2 flex-wrap">
+				<span className="text-xs font-medium text-violet-800 dark:text-violet-200">Hub ownership</span>
+				<Badge tone="violet">{badge}</Badge>
+				{linked && <Badge tone="slate">{linked}</Badge>}
+			</div>
+			<p className="text-[11px] text-violet-700/90 dark:text-violet-300/90">
+				{HUB_OWNERSHIP_COPY.ownerReadOnlyHint}
+				{ownerLabel ? (
+					<>
+						{' '}
+						Current owner: <strong>{ownerLabel}</strong> (read-only).
+					</>
+				) : (
+					<> No owner stamped yet — reassign to set one.</>
+				)}
+			</p>
+			<Button
+				type="button"
+				variant="secondary"
+				size="sm"
+				onClick={onOpenReassign}>
+				{HUB_OWNERSHIP_COPY.changeOwnerLabel}
+			</Button>
 
-      {reassignOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-900/40 dark:bg-black/50 border-0"
-            aria-label="Dismiss"
-            onClick={onCancelReassign}
-          />
-          <div
-            ref={dialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby={titleId}
-            aria-describedby={bodyId}
-            className="relative z-10 w-full max-w-md rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-xl space-y-4"
-          >
-            <h3
-              id={titleId}
-              className="text-base font-semibold text-slate-900 dark:text-slate-100"
-            >
-              {HUB_OWNERSHIP_COPY.reassignTitle}
-            </h3>
-            <p id={bodyId} className="text-sm text-slate-600 dark:text-slate-300">
-              {targetEnv
-                ? HUB_OWNERSHIP_COPY.reassignConfirm(
-                    targetEnv.displayName || tierShortLabel(targetEnv)
-                  )
-                : "Pick an Environment to own this hub."}
-            </p>
-            <div>
-              <Label htmlFor="hub-reassign-env">New owner</Label>
-              <SelectInput
-                id="hub-reassign-env"
-                value={reassignTargetId ?? ""}
-                onChange={(e) => onTargetChange(e.target.value)}
-              >
-                {environments.map((env) => (
-                  <option key={env.id} value={env.id}>
-                    {env.displayName} ({tierShortLabel(env)})
-                  </option>
-                ))}
-              </SelectInput>
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={onCancelReassign}
-              >
-                {HUB_OWNERSHIP_COPY.cancelLabel}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={!reassignTargetId}
-                onClick={onConfirmReassign}
-              >
-                {HUB_OWNERSHIP_COPY.reassignConfirmLabel}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+			{reassignOpen && (
+				<div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+					<button
+						type="button"
+						className="absolute inset-0 bg-slate-900/40 dark:bg-black/50 border-0"
+						aria-label="Dismiss"
+						onClick={onCancelReassign}
+					/>
+					<div
+						ref={dialogRef}
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby={titleId}
+						aria-describedby={bodyId}
+						className="relative z-10 w-full max-w-md rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 shadow-xl space-y-4">
+						<h3
+							id={titleId}
+							className="text-base font-semibold text-slate-900 dark:text-slate-100">
+							{HUB_OWNERSHIP_COPY.reassignTitle}
+						</h3>
+						<p
+							id={bodyId}
+							className="text-sm text-slate-600 dark:text-slate-300">
+							{targetEnv
+								? HUB_OWNERSHIP_COPY.reassignConfirm(targetEnv.displayName || tierShortLabel(targetEnv))
+								: 'Pick an Environment to own this hub.'}
+						</p>
+						<div>
+							<Label htmlFor="hub-reassign-env">New owner</Label>
+							<SelectInput
+								id="hub-reassign-env"
+								value={reassignTargetId ?? ''}
+								onChange={(e) => onTargetChange(e.target.value)}>
+								{environments.map((env) => (
+									<option
+										key={env.id}
+										value={env.id}>
+										{env.displayName} ({tierShortLabel(env)})
+									</option>
+								))}
+							</SelectInput>
+						</div>
+						<div className="flex justify-end gap-2">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={onCancelReassign}>
+								{HUB_OWNERSHIP_COPY.cancelLabel}
+							</Button>
+							<Button
+								type="button"
+								variant="secondary"
+								size="sm"
+								disabled={!reassignTargetId}
+								onClick={onConfirmReassign}>
+								{HUB_OWNERSHIP_COPY.reassignConfirmLabel}
+							</Button>
+						</div>
+					</div>
+				</div>
+			)}
+		</div>
+	);
 }

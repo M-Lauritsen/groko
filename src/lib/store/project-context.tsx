@@ -1,14 +1,6 @@
-"use client";
+'use client';
 
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Environment,
   EnvironmentKnobs,
@@ -47,73 +39,91 @@ import {
   type HistoryStack,
 } from "./history";
 import {
-  applyStarterToState,
-  type StarterApplyMode,
-} from "./starter-apply";
+	pruneExportConfig,
+	withDomainGroupModule,
+	withResourceModule,
+	withTypeGroupModule,
+	resetExportConfig,
+} from '../generate/export-map';
+import { getResourceType } from '../schema/resources';
+import { defaultEnvironments, defaultScopeForNewResource } from '../schema/environments';
+import { mergeImportedResources } from '../import/mapToProject';
 import {
-  reassignHubOwner,
-  withHubOwnerOnCreate,
-} from "./hub-dns-ownership";
+	canRedo as historyCanRedo,
+	canUndo as historyCanUndo,
+	cloneProjectState,
+	createHistory,
+	mutateWithHistory,
+	redo as historyRedo,
+	undo as historyUndo,
+	VALUE_EDIT_DEBOUNCE_MS,
+	type HistoryStack,
+} from './history';
+import { applyStarterToState, type StarterApplyMode } from './starter-apply';
+import { reassignHubOwner, withHubOwnerOnCreate } from './hub-dns-ownership';
+import { parseProjectFile } from './project-persistence';
 
 function uid(): string {
-  return `r_${Math.random().toString(36).slice(2, 10)}`;
+	return `r_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 const defaultConfig: ProjectConfig = {
-  name: "my-azure-project",
-  location: "westeurope",
-  namingPrefix: "myapp",
-  tags: { Environment: "dev", ManagedBy: "terraform" },
-  starter: "blank",
+	name: 'my-azure-project',
+	location: 'westeurope',
+	namingPrefix: 'myapp',
+	tags: { Environment: 'dev', ManagedBy: 'terraform' },
+	starter: 'blank',
 };
 
 const initialEnvironments = defaultEnvironments();
 
-const initialState: ProjectState = {
-  config: defaultConfig,
-  environments: initialEnvironments,
-  activeEnvironmentId: initialEnvironments[0]?.id ?? "dev",
-  resources: [],
-  selectedResourceId: null,
-  exportConfig: defaultExportConfig(),
-};
+export function createInitialProjectState(): ProjectState {
+	return {
+		config: defaultConfig,
+		environments: initialEnvironments,
+		activeEnvironmentId: initialEnvironments[0]?.id ?? 'dev',
+		resources: [],
+		selectedResourceId: null,
+		exportConfig: defaultExportConfig(),
+	};
+}
+
+const initialState = createInitialProjectState();
 
 interface ProjectContextValue {
-  state: ProjectState;
-  canUndo: boolean;
-  canRedo: boolean;
-  undo: () => void;
-  redo: () => void;
-  setConfig: (partial: Partial<ProjectConfig>) => void;
-  setActiveEnvironment: (id: string) => void;
-  updateEnvironment: (
-    id: string,
-    patch: Partial<Omit<Environment, "id" | "knobs">> & {
-      knobs?: Partial<EnvironmentKnobs>;
-    }
-  ) => void;
-  addEnvironment: (env: Environment) => void;
-  removeEnvironment: (id: string) => void;
-  applyStarter: (starterId: string, mode?: StarterApplyMode) => void;
-  addResource: (type: string) => string;
-  updateResource: (id: string, patch: Partial<ResourceInstance>) => void;
-  updateResourceValue: (id: string, key: string, value: unknown) => void;
-  updateExistingValue: (id: string, key: string, value: unknown) => void;
-  setResourceScope: (id: string, scope: ResourceScope) => void;
-  /** Explicit hub DNS / VNet link owner reassign (Develops #2). */
-  reassignHubOwnerEnvironment: (id: string, environmentId: string) => void;
-  removeResource: (id: string) => void;
-  selectResource: (id: string | null) => void;
-  getUniqueTfName: (type: string, preferred?: string) => string;
-  importResources: (
-    resources: ResourceInstance[],
-    mode: "merge" | "replace"
-  ) => void;
-  setExportConfig: (config: ExportConfig) => void;
-  setResourceModule: (resourceId: string, moduleId: string | null) => void;
-  setTypeGroupModule: (type: string, moduleId: string | null) => void;
-  setDomainGroupModule: (fromModuleId: string, toModuleId: string | null) => void;
-  resetFolderMap: () => void;
+	state: ProjectState;
+	canUndo: boolean;
+	canRedo: boolean;
+	undo: () => void;
+	redo: () => void;
+	setConfig: (partial: Partial<ProjectConfig>) => void;
+	replaceProject: (project: ProjectState | string) => void;
+	setActiveEnvironment: (id: string) => void;
+	updateEnvironment: (
+		id: string,
+		patch: Partial<Omit<Environment, 'id' | 'knobs'>> & {
+			knobs?: Partial<EnvironmentKnobs>;
+		},
+	) => void;
+	addEnvironment: (env: Environment) => void;
+	removeEnvironment: (id: string) => void;
+	applyStarter: (starterId: string, mode?: StarterApplyMode) => void;
+	addResource: (type: string) => string;
+	updateResource: (id: string, patch: Partial<ResourceInstance>) => void;
+	updateResourceValue: (id: string, key: string, value: unknown) => void;
+	updateExistingValue: (id: string, key: string, value: unknown) => void;
+	setResourceScope: (id: string, scope: ResourceScope) => void;
+	/** Explicit hub DNS / VNet link owner reassign (Develops #2). */
+	reassignHubOwnerEnvironment: (id: string, environmentId: string) => void;
+	removeResource: (id: string) => void;
+	selectResource: (id: string | null) => void;
+	getUniqueTfName: (type: string, preferred?: string) => string;
+	importResources: (resources: ResourceInstance[], mode: 'merge' | 'replace') => void;
+	setExportConfig: (config: ExportConfig) => void;
+	setResourceModule: (resourceId: string, moduleId: string | null) => void;
+	setTypeGroupModule: (type: string, moduleId: string | null) => void;
+	setDomainGroupModule: (fromModuleId: string, toModuleId: string | null) => void;
+	resetFolderMap: () => void;
 }
 
 const ProjectContext = createContext<ProjectContextValue | null>(null);
@@ -731,7 +741,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useProject(): ProjectContextValue {
-  const ctx = useContext(ProjectContext);
-  if (!ctx) throw new Error("useProject must be used within ProjectProvider");
-  return ctx;
+	const ctx = useContext(ProjectContext);
+	if (!ctx) throw new Error('useProject must be used within ProjectProvider');
+	return ctx;
 }
