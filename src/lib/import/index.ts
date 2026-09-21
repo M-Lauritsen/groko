@@ -17,6 +17,8 @@ import {
   IMPORT_DIAGNOSTIC_REPORT_FILE_NAME,
   safeImportSourcePath,
   type ImportDiagnosticReport,
+  type ImportSkipDiagnostic,
+  type ImportSkipReasonCode,
 } from "./report";
 import {
   findInvalidImportReferences,

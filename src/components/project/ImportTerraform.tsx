@@ -93,7 +93,7 @@ function missingRequiredFields(
         ? resource.existingValues[field.key] ?? resource.values[field.key]
         : resource.values[field.key];
       return isReferenceValue(value)
-        ? resource.useExisting || !draft.some((candidate) => candidate.id === value.resourceId)
+        ? !draft.some((candidate) => candidate.id === value.resourceId)
         : !hasLiteralValue(value);
     })
     .map((field) => field.label);

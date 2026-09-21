@@ -1041,7 +1041,19 @@ function isStaticScalar(value: HclValue | undefined): value is StaticScalar {
 function isSafeLocalValue(value: HclValue): boolean {
   return (
     isStaticScalar(value) ||
-    (isExpressionValue(value) && /^(var|local)\.[A-Za-z_][\w-]*$/.test(value.__expr))
+    (isExpressionValue(value) && (
+      /^(var|local)\.[A-Za-z_][\w-]*$/.test(value.__expr) ||
+      isSafeStaticTemplate(value.__expr)
+    ))
+  );
+}
+
+function isSafeStaticTemplate(template: string): boolean {
+  const interpolations = [...template.matchAll(/\$\{([^{}]*)\}/g)];
+  return (
+    interpolations.length > 0 &&
+    interpolations.every((match) => /^(var|local)\.[A-Za-z_][\w-]*$/.test(match[1])) &&
+    !template.replace(/\$\{(var|local)\.[A-Za-z_][\w-]*\}/g, "").includes("${")
   );
 }
 

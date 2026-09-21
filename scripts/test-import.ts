@@ -9,6 +9,7 @@ import JSZip from "jszip";
 import {
   createImportDiagnosticReport,
   findInvalidImportReferences,
+  getImportSkipDiagnostic,
   importFromUpload,
   mapToProject,
   parseHclFiles,
@@ -193,6 +194,22 @@ resource "azurerm_resource_group" "this" {
       "module_output_unresolved",
     ]
   );
+  const moduleSession = importFromUpload({
+    files: [
+      {
+        name: "safe/main.tf",
+        content: `module "remote" { source = "Azure/avm-res-resources-resourcegroup/azurerm" }`,
+      },
+    ],
+    rootProfiles: [],
+  });
+  assert.equal(moduleSession.skipped[0]?.sourcePath, "safe/main.tf");
+  assert.deepEqual(getImportSkipDiagnostic(moduleSession.skipped[0]!), {
+    reasonCode: "module_source_remote",
+    title: "Remote module source",
+    actionability: "repair",
+    help: "Upload a local copy of this module, then import the files together.",
+  });
 
   const staticModuleOutputs = mapToProject(parseHclFiles([
     {
@@ -744,9 +761,9 @@ import { to = module.example[0].azurerm_resource_group.main id = "ignored" }`,
       content: `
 variable "location" { default = "northeurope" }
 variable "name_suffix" { default = "default" }
-locals { group_suffix = var.name_suffix }
+locals { group_name = "rg-\${var.name_suffix}" }
 resource "azurerm_resource_group" "templated" {
-  name = "rg-\${local.group_suffix}"
+  name = local.group_name
   location = "\${var.location}"
 }
 resource "azurerm_resource_group" "dynamic_template" {
@@ -899,6 +916,11 @@ resource "azurerm_resource_group" "dynamic_first" { for_each = {} name = module.
   assert.deepEqual(
     createImportDiagnosticReport(1, precedenceParsed, precedenceSummary, "2026-09-21T12:00:00.000Z").outcomes.skipped.map((item) => item.reasonCode),
     ["provider_not_supported", "for_each_not_supported"]
+  );
+  assert.equal(
+    getImportSkipDiagnostic(precedenceSummary.skipped[1]!).actionability,
+    "informational",
+    "dynamic resource iteration remains an explicit non-importable outcome"
   );
 
   const mappedParsed = parseHclFiles([{ name: "root-a/main.tf", content: `resource "azurerm_resource_group" "main" { name = "rg-a" location = "westeurope" }` }]);

@@ -51,7 +51,8 @@ function main() {
   requireSource(/focus-within:ring-2 focus-within:ring-sky-500/, "shows a visible focus treatment for Existing/Create radios");
   requireSource(/function missingRequiredFields[\s\S]*def\.fields\.filter\(\(field\) => field\.required\)/, "derives required Create fields from the catalogue definition");
   requireSource(/def\.fields\.filter\(\(field\) => field\.existingKey\)/, "requires Existing identifying keys from the catalogue definition");
-  requireSource(/isReferenceValue\(value\)[\s\S]*draft\.some\(\(candidate\) => candidate\.id === value\.resourceId\)/, "accepts only resolvable references for Create fields");
+  requireSource(/isReferenceValue\(value\)[\s\S]*!draft\.some\(\(candidate\) => candidate\.id === value\.resourceId\)/, "accepts only resolvable references for required identifiers");
+  assert.doesNotMatch(source, /resource\.useExisting \|\| !draft\.some/, "does not accept dangling Existing identifier references");
   requireSource(/function invalidReferenceFields[\s\S]*field\.type === "reference"[\s\S]*!field\.refTypes\?\.includes\(target\.type\)[\s\S]*!canReference\(resource, target\)/, "validates imported reference type and scope without rewriting the mapped value");
   requireSource(/function invalidCompatibilityFields[\s\S]*isPrivateEndpointTargetCompatible[\s\S]*isRoleAssignmentScopeCompatible/, "validates Private Endpoint and Role Assignment domain compatibility without rewriting imported values");
   requireSource(/const invalidCompatibilityValidation[\s\S]*invalidCompatibilityFields\(resource, draft\)/, "revalidates domain compatibility from the review draft");
