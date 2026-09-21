@@ -34,7 +34,7 @@ export function TextInput(
   return (
     <input
       {...props}
-      className={`w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:border-transparent disabled:opacity-50 ${props.className ?? ""}`}
+      className={`w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-[#172638] px-3 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:border-transparent disabled:opacity-50 ${props.className ?? ""}`}
     />
   );
 }
@@ -45,7 +45,7 @@ export function SelectInput(
   return (
     <select
       {...props}
-      className={`w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:border-transparent ${props.className ?? ""}`}
+      className={`w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-[#172638] px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:border-transparent ${props.className ?? ""}`}
     />
   );
 }
@@ -108,7 +108,7 @@ export const Button = React.forwardRef<
     primary:
       "bg-sky-600 hover:bg-sky-500 text-white shadow-sm disabled:bg-sky-400",
     secondary:
-      "bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700",
+      "bg-white dark:bg-[#1a2d42] border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-[#213a56]",
     danger: "bg-rose-600 hover:bg-rose-500 text-white",
     ghost:
       "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800",
@@ -164,7 +164,7 @@ export function Card({
 }) {
   return (
     <div
-      className={`rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm ${className}`}
+      className={`rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-[#172638] shadow-sm ${className}`}
     >
       {children}
     </div>

@@ -3,20 +3,125 @@
 import { useMemo, useRef, useState } from 'react';
 import { useProject } from '@/lib/store/project-context';
 import { serializeProject } from '@/lib/store/project-persistence';
+import { defaultEnvironments, envScope, sharedScope } from '@/lib/schema/environments';
 import { Button, Card, Hint, Label, TextInput } from '@/components/ui/Field';
 
 const DRAFTS_KEY = 'groko-project-drafts';
 
 type Draft = { name: string; savedAt: string; payload: string };
 
+const SAMPLE_PROJECT_DRAFT: Draft = {
+	name: 'Sample project',
+	savedAt: '2024-01-01T00:00:00.000Z',
+	payload: serializeProject({
+		config: {
+			name: 'demo-azure-project',
+			location: 'westeurope',
+			namingPrefix: 'demoapp',
+			tags: { Environment: 'dev', ManagedBy: 'terraform', Owner: 'platform-team' },
+			starter: 'web-sql',
+		},
+		environments: defaultEnvironments(),
+		activeEnvironmentId: 'dev',
+		resources: [
+			{
+				id: 'sample-rg',
+				type: 'azurerm_resource_group',
+				tfName: 'main',
+				useExisting: false,
+				values: {
+					name: 'demoapp-rg',
+					location: 'westeurope',
+					tags: { Environment: 'dev', ManagedBy: 'terraform', Owner: 'platform-team' },
+				},
+				existingValues: {},
+				scope: sharedScope(),
+			},
+			{
+				id: 'sample-plan',
+				type: 'azurerm_service_plan',
+				tfName: 'main',
+				useExisting: false,
+				values: {
+					name: 'demoapp-asp',
+					resource_group_name: { resourceId: 'sample-rg', attr: 'name' },
+					location: { resourceId: 'sample-rg', attr: 'location' },
+					os_type: 'Linux',
+					sku_name: 'B1',
+					tags: { Environment: 'dev', ManagedBy: 'terraform', Owner: 'platform-team' },
+				},
+				existingValues: {},
+				scope: envScope('dev'),
+			},
+			{
+				id: 'sample-app',
+				type: 'azurerm_linux_web_app',
+				tfName: 'main',
+				useExisting: false,
+				values: {
+					name: 'demoapp-web',
+					resource_group_name: { resourceId: 'sample-rg', attr: 'name' },
+					location: { resourceId: 'sample-rg', attr: 'location' },
+					service_plan_id: { resourceId: 'sample-plan', attr: 'id' },
+					https_only: true,
+					node_version: '20-lts',
+					tags: { Environment: 'dev', ManagedBy: 'terraform', Owner: 'platform-team' },
+				},
+				existingValues: {},
+				scope: envScope('dev'),
+			},
+			{
+				id: 'sample-sql',
+				type: 'azurerm_mssql_server',
+				tfName: 'main',
+				useExisting: false,
+				values: {
+					name: 'demoapp-sql',
+					resource_group_name: { resourceId: 'sample-rg', attr: 'name' },
+					location: { resourceId: 'sample-rg', attr: 'location' },
+					version: '12.0',
+					administrator_login: 'sqladmin',
+					administrator_login_password: 'Replace-With-Strong-Password!',
+					minimum_tls_version: '1.2',
+					tags: { Environment: 'dev', ManagedBy: 'terraform', Owner: 'platform-team' },
+				},
+				existingValues: {},
+				scope: envScope('dev'),
+			},
+			{
+				id: 'sample-db',
+				type: 'azurerm_mssql_database',
+				tfName: 'main',
+				useExisting: false,
+				values: {
+					name: 'demoapp-db',
+					server_id: { resourceId: 'sample-sql', attr: 'id' },
+					collation: 'SQL_Latin1_General_CP1_CI_AS',
+					max_size_gb: 2,
+					sku_name: 'Basic',
+					tags: { Environment: 'dev', ManagedBy: 'terraform', Owner: 'platform-team' },
+				},
+				existingValues: {},
+				scope: envScope('dev'),
+			},
+		],
+		selectedResourceId: null,
+		exportConfig: { moduleByResourceId: {} },
+	}),
+};
+
 function readDrafts(): Draft[] {
 	try {
 		const value = JSON.parse(window.localStorage.getItem(DRAFTS_KEY) ?? '[]');
-		return Array.isArray(value)
+		const drafts = Array.isArray(value)
 			? value.filter((draft) => draft && typeof draft.name === 'string' && typeof draft.payload === 'string')
 			: [];
+		if (!drafts.some((draft) => draft.name === SAMPLE_PROJECT_DRAFT.name)) {
+			return [SAMPLE_PROJECT_DRAFT, ...drafts].sort((left, right) => right.savedAt.localeCompare(left.savedAt));
+		}
+		return drafts.sort((left, right) => right.savedAt.localeCompare(left.savedAt));
 	} catch {
-		return [];
+		return [SAMPLE_PROJECT_DRAFT];
 	}
 }
 

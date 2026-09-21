@@ -6,7 +6,6 @@ import { STARTERS } from '@/lib/schema/starters';
 import { AZURE_LOCATIONS } from '@/lib/schema/types';
 import { starterConfirmKind } from '@/lib/store/prod-friction';
 import { Label, TextInput, SelectInput, Hint, Button, Card, SectionTitle, Badge } from '@/components/ui/Field';
-import { ImportTerraform } from '@/components/project/ImportTerraform';
 import { ProdFrictionDialog } from '@/components/project/ProdFrictionDialog';
 
 export function ProjectSetup({ onContinue }: { onContinue?: () => void }) {
@@ -101,7 +100,6 @@ export function ProjectSetup({ onContinue }: { onContinue?: () => void }) {
 
 		document.addEventListener('keydown', onKeyDown);
 		return () => document.removeEventListener('keydown', onKeyDown);
-		// eslint-disable-next-line react-hooks/exhaustive-deps -- closeConfirm uses stable setters
 	}, [confirmStarter]);
 
 	const pendingLabel = STARTERS.find((s) => s.id === confirmStarter)?.label ?? confirmStarter;
@@ -161,7 +159,12 @@ export function ProjectSetup({ onContinue }: { onContinue?: () => void }) {
 
 				<div className="mt-4">
 					<Label>Tags</Label>
-					<div className="flex flex-wrap gap-2 mb-2">
+					<p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+						Tags are metadata key/value pairs attached to generated resources. Use them for ownership, cost tracking,
+						and filtering. Example: <span className="font-medium text-slate-700 dark:text-slate-200">Environment=dev</span>
+						, <span className="font-medium text-slate-700 dark:text-slate-200">ManagedBy=terraform</span>.
+					</p>
+					<div className="flex flex-wrap gap-2 mb-2 mt-3">
 						{Object.entries(config.tags).map(([k, v]) => (
 							<span
 								key={k}
@@ -309,8 +312,6 @@ export function ProjectSetup({ onContinue }: { onContinue?: () => void }) {
 					/>
 				)}
 			</Card>
-
-			<ImportTerraform />
 
 			<Card className="p-5">
 				<SectionTitle>Environment ready</SectionTitle>
