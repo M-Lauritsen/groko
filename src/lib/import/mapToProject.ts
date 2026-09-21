@@ -14,11 +14,13 @@ import {
   defaultEnvironments,
   defaultScopeForNewResource,
   inferScopeFromName,
+  mapResourceReferences,
   sharedScope,
 } from "../schema/environments";
 import { withHubOwnerOnCreate } from "../store/hub-dns-ownership";
 import type { HclBody, HclValue, ParsedBlock, ParseResult } from "./parse";
 import { isSimpleRef } from "./parse";
+import { validateImportReference } from "./references";
 
 const SUPPORTED = new Set(RESOURCE_CATALOGUE.map((r) => r.type));
 
@@ -41,12 +43,28 @@ export interface SkippedItem {
   type: string;
   name: string;
   reason: string;
+  sourceIndex?: number;
+  sourceHint?: string;
+  sourcePath?: string | null;
+}
+
+export interface MappedItem {
+  kind: "resource" | "data";
+  type: string;
+  name: string;
+  sourceIndex?: number;
+  sourceHint?: string;
+  sourcePath?: string | null;
+  mappedFieldNames: string[];
+  unmappedFieldNames: string[];
+  unsupportedConstructs: string[];
 }
 
 export interface ImportSummary {
   resources: ResourceInstance[];
   warnings: string[];
   skipped: SkippedItem[];
+  mapped: MappedItem[];
   supportedCount: number;
   unsupportedTypeCount: number;
   unmappedArgCount: number;
@@ -73,6 +91,44 @@ function isPlainObject(v: HclValue): v is { [key: string]: HclValue } {
     !("__expr" in v) &&
     !("__raw_block" in v)
   );
+}
+
+function moduleOutputPath(value: HclValue, path: string): string | null {
+  if (isRef(value) && value.__ref.startsWith("module.")) return path;
+  if (isExpr(value) && /(?:^|[^\w-])module\./.test(value.__expr)) return path;
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      const found = moduleOutputPath(item, `${path}[${index}]`);
+      if (found) return found;
+    }
+  }
+  if (isPlainObject(value)) {
+    for (const [key, item] of Object.entries(value)) {
+      const found = moduleOutputPath(item, `${path}.${key}`);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function moduleOutputPathInBody(body: HclBody, prefix = ""): string | null {
+  for (const [key, value] of Object.entries(body.attrs)) {
+    const found = moduleOutputPath(value, `${prefix}${key}`);
+    if (found) return found;
+  }
+  for (const block of body.blocks) {
+    const segment = `${block.type}${block.labels.length ? `.${block.labels.join(".")}` : ""}`;
+    const found = moduleOutputPathInBody(block.body, `${prefix}${segment}.`);
+    if (found) return found;
+  }
+  return null;
+}
+
+function containsParserArtifact(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  if ("__ref" in value || "__expr" in value || "__raw_block" in value) return true;
+  if (Array.isArray(value)) return value.some(containsParserArtifact);
+  return Object.values(value).some(containsParserArtifact);
 }
 
 function fieldByHclKey(def: FieldDef[], key: string): FieldDef | undefined {
@@ -164,13 +220,28 @@ function parseRefExpr(expr: string): {
   };
 }
 
+function allowedSourceReferenceAttrs(
+  resourceType: string,
+  field: FieldDef | undefined
+): ReferenceAttr[] {
+  if (resourceType === "azurerm_linux_function_app") {
+    if (field?.key === "storage_account_id") return ["name"];
+    if (field?.key === "application_insights_id") {
+      return ["connection_string", "instrumentation_key"];
+    }
+  }
+  return field?.refAttr ? [field.refAttr] : [];
+}
+
 /** Try to lift common nested blocks into flat catalogue fields. */
 function applyNestedHeuristics(
   type: string,
   body: HclBody,
   values: Record<string, unknown>,
   warnings: string[],
-  label: string
+  label: string,
+  mappedFieldNames: Set<string>,
+  unsupportedConstructs: Set<string>
 ): number {
   let unmapped = 0;
   for (const block of body.blocks) {
@@ -184,11 +255,82 @@ function applyNestedHeuristics(
       }
     }
 
+    if (type === "azurerm_private_endpoint" && block.type === "private_service_connection") {
+      const connectionBlocks = body.blocks.filter(
+        (candidate) => candidate.type === "private_service_connection"
+      );
+      const attrs = block.body.attrs;
+      const subresources = attrs.subresource_names;
+      const target = attrs.private_connection_resource_id;
+      const connectionName = attrs.name;
+      const manualConnection = attrs.is_manual_connection;
+      const isStaticSubresource =
+        Array.isArray(subresources) &&
+        subresources.length === 1 &&
+        typeof subresources[0] === "string";
+      const isStaticTarget = typeof target === "string" || isRef(target);
+      const isStaticName = typeof connectionName === "string";
+      const isStaticManual =
+        manualConnection === undefined || typeof manualConnection === "boolean";
+
+      if (
+        connectionBlocks.length === 1 &&
+        isStaticSubresource &&
+        isStaticTarget &&
+        isStaticName &&
+        isStaticManual
+      ) {
+        values.private_connection_name = connectionName;
+        values.private_connection_resource_id = target;
+        values.subresource_names = subresources[0];
+        if (manualConnection !== undefined) {
+          values.is_manual_connection = manualConnection;
+        }
+        mappedFieldNames.add("private_connection_name");
+        mappedFieldNames.add("private_connection_resource_id");
+        mappedFieldNames.add("subresource_names");
+        if (manualConnection !== undefined) {
+          mappedFieldNames.add("is_manual_connection");
+        }
+      } else {
+        const construct =
+          "private_service_connection (only one static connection is supported)";
+        warnings.push(`${label}: skipped ${construct}`);
+        unsupportedConstructs.add(construct);
+        unmapped++;
+      }
+      continue;
+    }
+
+    if (type === "azurerm_private_endpoint" && block.type === "private_dns_zone_group") {
+      const dnsGroupBlocks = body.blocks.filter(
+        (candidate) => candidate.type === "private_dns_zone_group"
+      );
+      const zoneIds = block.body.attrs.private_dns_zone_ids;
+      const isStaticZone =
+        Array.isArray(zoneIds) &&
+        zoneIds.length === 1 &&
+        (typeof zoneIds[0] === "string" || isRef(zoneIds[0]));
+
+      if (dnsGroupBlocks.length === 1 && isStaticZone) {
+        values.private_dns_zone_id = zoneIds[0];
+        mappedFieldNames.add("private_dns_zone_id");
+      } else {
+        const construct =
+          "private_dns_zone_group (only one static zone is supported)";
+        warnings.push(`${label}: skipped ${construct}`);
+        unsupportedConstructs.add(construct);
+        unmapped++;
+      }
+      continue;
+    }
+
     // NSG security_rule blocks — catalogue uses toggles; warn
     if (type === "azurerm_network_security_group" && block.type === "security_rule") {
       warnings.push(
         `${label}: nested security_rule blocks are not imported (use builder toggles)`
       );
+      unsupportedConstructs.add(`nested block "${block.type}"`);
       unmapped++;
       continue;
     }
@@ -221,7 +363,10 @@ function applyNestedHeuristics(
     // Function App identity block
     if (type === "azurerm_linux_function_app" && block.type === "identity") {
       const t = block.body.attrs.type;
-      if (typeof t === "string") values.identity_type = t;
+      if (typeof t === "string") {
+        values.identity_type = t;
+        mappedFieldNames.add("identity_type");
+      }
       continue;
     }
 
@@ -252,10 +397,33 @@ function applyNestedHeuristics(
         if (typeof ext === "boolean") values.ingress_enabled = ext;
         continue;
       }
+      if (block.type === "identity") {
+        const identityType = block.body.attrs.type;
+        if (typeof identityType === "string") {
+          values.identity_type = identityType;
+          mappedFieldNames.add("identity_type");
+        }
+        const identityIds = block.body.attrs.identity_ids;
+        if (Array.isArray(identityIds) && identityIds.length === 1) {
+          values.user_assigned_identity_id = identityIds[0];
+          mappedFieldNames.add("user_assigned_identity_id");
+        } else if (identityIds !== undefined) {
+          const construct = "identity.identity_ids (multiple identities)";
+          warnings.push(`${label}: skipped ${construct}`);
+          unsupportedConstructs.add(construct);
+          unmapped++;
+        }
+        continue;
+      }
     }
 
     warnings.push(
       `${label}: skipped nested block "${block.type}"${
+        block.labels.length ? ` (${block.labels.join(", ")})` : ""
+      }`
+    );
+    unsupportedConstructs.add(
+      `nested block "${block.type}"${
         block.labels.length ? ` (${block.labels.join(", ")})` : ""
       }`
     );
@@ -270,6 +438,7 @@ export function mapToProject(
 ): ImportSummary {
   const warnings = [...parsed.warnings];
   const skipped: SkippedItem[] = [];
+  const mapped: MappedItem[] = [];
   let unmappedArgCount = 0;
   let unsupportedTypeCount = 0;
 
@@ -278,6 +447,7 @@ export function mapToProject(
     block: ParsedBlock;
     instance: ResourceInstance;
     rawAttrs: Record<string, HclValue>;
+    mappedItem: MappedItem;
   };
   const pending: Pending[] = [];
   const usedTfNames = new Map<string, Set<string>>(); // type -> names
@@ -307,7 +477,9 @@ export function mapToProject(
         kind: "module",
         type: "module",
         name: block.name,
-        reason: "Modules are not imported (root resources only)",
+        reason: block.moduleReason ?? "Module source was not expanded",
+        sourceIndex: block.sourceIndex,
+        sourceHint: block.sourceHint,
       });
       continue;
     }
@@ -324,12 +496,26 @@ export function mapToProject(
 
     const label = `${block.kind} "${block.type}" "${block.name}"`;
 
+    if (block.kind === "data" && block.type === "azurerm_client_config") {
+      skipped.push({
+        kind: block.kind,
+        type: block.type,
+        name: block.name,
+        reason: "Client configuration lookup is not a deployable resource",
+        sourceIndex: block.sourceIndex,
+        sourceHint: block.sourceHint,
+      });
+      continue;
+    }
+
     if (!block.type.startsWith("azurerm_")) {
       skipped.push({
         kind: block.kind,
         type: block.type,
         name: block.name,
         reason: "Non-azurerm provider / unknown type",
+        sourceIndex: block.sourceIndex,
+        sourceHint: block.sourceHint,
       });
       unsupportedTypeCount++;
       continue;
@@ -341,6 +527,8 @@ export function mapToProject(
         type: block.type,
         name: block.name,
         reason: "Type not in RESOURCE_CATALOGUE",
+        sourceIndex: block.sourceIndex,
+        sourceHint: block.sourceHint,
       });
       unsupportedTypeCount++;
       continue;
@@ -353,7 +541,22 @@ export function mapToProject(
         name: block.name,
         reason: block.body.meta.hasForEach
           ? "for_each is not supported"
-          : "count is not supported",
+          : "count must resolve to 0 or 1; unknown or larger counts are not supported",
+        sourceIndex: block.sourceIndex,
+        sourceHint: block.sourceHint,
+      });
+      continue;
+    }
+
+    const moduleOutput = moduleOutputPathInBody(block.body);
+    if (moduleOutput) {
+      skipped.push({
+        kind: block.kind,
+        type: block.type,
+        name: block.name,
+        reason: `Unresolved module output reference in "${moduleOutput}"`,
+        sourceIndex: block.sourceIndex,
+        sourceHint: block.sourceHint,
       });
       continue;
     }
@@ -363,6 +566,14 @@ export function mapToProject(
     const useExisting = block.kind === "data";
     const values: Record<string, unknown> = {};
     const existingValues: Record<string, unknown> = {};
+    const mappedFieldNames = new Set<string>();
+    const unmappedFieldNames = new Set<string>();
+    const unsupportedConstructs = new Set<string>();
+
+    if (block.templateNote) {
+      unsupportedConstructs.add(block.templateNote);
+      warnings.push(`${label}: ${block.templateNote}`);
+    }
 
     // defaults
     for (const f of typeDef.fields) {
@@ -407,19 +618,24 @@ export function mapToProject(
       const field = fieldByHclKey(typeDef.fields, mapKey);
       if (!field) {
         unmappedArgCount++;
+        unmappedFieldNames.add(key);
         warnings.push(`${label}: unmapped argument "${key}"`);
         continue;
       }
       if (isExpr(raw)) {
+        delete values[field.key];
         warnings.push(
           `${label}: complex expression for "${key}" (${raw.__expr}) — left empty`
         );
         unmappedArgCount++;
+        unmappedFieldNames.add(key);
         continue;
       }
       const coerced = coerceForField(field, raw);
       if (coerced === undefined) {
+        delete values[field.key];
         unmappedArgCount++;
+        unmappedFieldNames.add(key);
         warnings.push(`${label}: could not map "${key}" to field ${field.key}`);
         continue;
       }
@@ -435,6 +651,7 @@ export function mapToProject(
       } else {
         values[field.key] = coerced;
       }
+      mappedFieldNames.add(field.key);
     }
 
     unmappedArgCount += applyNestedHeuristics(
@@ -442,8 +659,29 @@ export function mapToProject(
       block.body,
       values,
       warnings,
-      label
+      label,
+      mappedFieldNames,
+      unsupportedConstructs
     );
+
+    const literalReferenceReason =
+      block.type === "azurerm_private_endpoint" &&
+      typeof values.private_connection_resource_id === "string"
+        ? "Literal target ID cannot be safely matched to a builder resource"
+        : block.type === "azurerm_role_assignment" && typeof values.scope === "string"
+          ? "Literal scope ID cannot be safely matched to a builder resource"
+          : null;
+    if (literalReferenceReason) {
+      skipped.push({
+        kind: block.kind,
+        type: block.type,
+        name: block.name,
+        reason: literalReferenceReason,
+        sourceIndex: block.sourceIndex,
+        sourceHint: block.sourceHint,
+      });
+      continue;
+    }
 
     const nameHint =
       typeof values.name === "string"
@@ -498,26 +736,40 @@ export function mapToProject(
         ? scope.environmentId
         : environments[0]?.id ?? "dev";
     instance = withHubOwnerOnCreate(instance, ownerSeed);
-    pending.push({ block, instance, rawAttrs: block.body.attrs });
+    const mappedItem: MappedItem = {
+      kind: block.kind,
+      type: block.type,
+      name: block.name,
+      sourceIndex: block.sourceIndex,
+      sourceHint: block.sourceHint,
+      mappedFieldNames: [...mappedFieldNames].sort(),
+      unmappedFieldNames: [...unmappedFieldNames].sort(),
+      unsupportedConstructs: [...unsupportedConstructs].sort(),
+    };
+    pending.push({ block, instance, rawAttrs: block.body.attrs, mappedItem });
+    mapped.push(mappedItem);
   }
 
-  // Index for ref resolution: type+tfName (+ data flag)
+  // Index references by upload root so independent uploads cannot cross-bind.
   const byAddr = new Map<string, ResourceInstance>();
   for (const p of pending) {
-    const key = `${p.instance.useExisting ? "data." : ""}${p.instance.type}.${p.instance.tfName}`;
-    byAddr.set(key, p.instance);
+    const key = `${p.instance.useExisting ? "data." : ""}${p.instance.type}.${p.instance.tfName}${p.block.countInstance ? "[0]" : ""}`;
+    byAddr.set(`${p.block.sourceRoot ?? ""}\u0000${key}`, p.instance);
     // Also allow lookup by original block name if renamed
     if (p.block.name !== p.instance.tfName) {
-      const orig = `${p.instance.useExisting ? "data." : ""}${p.instance.type}.${p.block.name}`;
-      if (!byAddr.has(orig)) byAddr.set(orig, p.instance);
+      const orig = `${p.instance.useExisting ? "data." : ""}${p.instance.type}.${p.block.name}${p.block.countInstance ? "[0]" : ""}`;
+      const rootedOriginal = `${p.block.sourceRoot ?? ""}\u0000${orig}`;
+      if (!byAddr.has(rootedOriginal)) byAddr.set(rootedOriginal, p.instance);
     }
   }
 
   function resolveOne(
+    source: ResourceInstance,
     field: FieldDef | undefined,
     value: unknown,
     label: string,
-    key: string
+    key: string,
+    sourceRoot: string
   ): unknown {
     if (value && typeof value === "object" && value !== null && "__ref" in value) {
       const expr = (value as { __ref: string }).__ref;
@@ -527,26 +779,36 @@ export function mapToProject(
         return undefined;
       }
       const addr = `${parsed.isData ? "data." : ""}${parsed.type}.${parsed.tfName}`;
-      const target = byAddr.get(addr);
+      const target = byAddr.get(`${sourceRoot}\u0000${addr}`);
       if (!target) {
         warnings.push(
           `${label}: reference ${expr} for "${key}" — target not in import set`
         );
         return undefined;
       }
-      const preferredAttr =
-        (field?.refAttr as ReferenceAttr | undefined) ?? parsed.attr;
+      const allowedAttrs = allowedSourceReferenceAttrs(source.type, field);
+      if (!allowedAttrs.includes(parsed.attr)) {
+        warnings.push(
+          `${label}: unmapped reference for "${key}" — attribute ${parsed.attr} is not allowed${field?.refAttr ? `; expected ${field.refAttr}` : ""}`
+        );
+        return undefined;
+      }
       const ref: ReferenceValue = {
         resourceId: target.id,
-        attr: preferredAttr,
+        attr: field?.refAttr ?? parsed.attr,
       };
+      const invalidReason = validateImportReference(source, field, ref, pending.map((item) => item.instance));
+      if (invalidReason) {
+        warnings.push(`${label}: unmapped reference for "${key}" — ${invalidReason}`);
+        return undefined;
+      }
       return ref;
     }
     // list items may contain refs
     if (Array.isArray(value)) {
       return value.map((item, idx) => {
         if (item && typeof item === "object" && item !== null && "__ref" in item) {
-          const resolved = resolveOne(field, item, label, `${key}[${idx}]`);
+          const resolved = resolveOne(source, field, item, label, `${key}[${idx}]`, sourceRoot);
           return resolved ?? "";
         }
         if (item && typeof item === "object" && item !== null && "__expr" in item) {
@@ -565,9 +827,25 @@ export function mapToProject(
     const nextValues: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(p.instance.values)) {
       const field = typeDef.fields.find((f) => f.key === k);
-      nextValues[k] = resolveOne(field, v, label, k);
+      nextValues[k] = resolveOne(p.instance, field, v, label, k, p.block.sourceRoot ?? "");
+      if (isRef(v as HclValue) && nextValues[k] === undefined) {
+        if (!p.mappedItem.unmappedFieldNames.includes(k)) {
+          p.mappedItem.unmappedFieldNames.push(k);
+          p.mappedItem.unmappedFieldNames.sort();
+          unmappedArgCount++;
+        }
+        p.mappedItem.mappedFieldNames = p.mappedItem.mappedFieldNames.filter(
+          (fieldName) => fieldName !== k
+        );
+      }
       // clean undefined
       if (nextValues[k] === undefined) delete nextValues[k];
+    }
+    for (const [key, value] of Object.entries(nextValues)) {
+      if (containsParserArtifact(value)) {
+        delete nextValues[key];
+        warnings.push(`${label}: unsupported expression dropped for "${key}"`);
+      }
     }
     p.instance.values = nextValues;
 
@@ -588,6 +866,7 @@ export function mapToProject(
     resources: pending.map((p) => p.instance),
     warnings,
     skipped,
+    mapped,
     supportedCount: pending.length,
     unsupportedTypeCount,
     unmappedArgCount,
@@ -646,23 +925,16 @@ export function mergeImportedResources(
     result.push(inst);
   }
 
-  // Fix references inside newly merged instances to new ids
+  // Fix references inside newly merged instances to new ids.
   const importedIds = new Set(idRemap.keys());
   for (const r of result) {
     if (![...idRemap.values()].includes(r.id)) continue;
-    for (const [k, v] of Object.entries(r.values)) {
-      if (
-        typeof v === "object" &&
-        v !== null &&
-        "resourceId" in v &&
-        importedIds.has((v as ReferenceValue).resourceId)
-      ) {
-        const newId = idRemap.get((v as ReferenceValue).resourceId);
-        if (newId) {
-          r.values[k] = { ...(v as ReferenceValue), resourceId: newId };
-        }
-      }
-    }
+    const remapped = mapResourceReferences(r, (reference) =>
+      importedIds.has(reference.resourceId)
+        ? { ...reference, resourceId: idRemap.get(reference.resourceId)! }
+        : reference
+    );
+    r.values = remapped.values;
   }
 
   return result;

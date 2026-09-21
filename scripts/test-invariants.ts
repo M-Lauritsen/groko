@@ -19,15 +19,22 @@ import {
   defaultEnvironments,
   envScope,
   filterRefCandidates,
+  findScopeCompatibleResource,
   isResourceVisibleInEnv,
+  mapResourceReferences,
   resourcesVisibleInEnv,
   sharedScope,
+  withScopeAndValidReferences,
 } from "../src/lib/schema/environments";
 import {
   canDownloadWithMap,
   listOrphans,
   withResourceModule,
 } from "../src/lib/generate/export-map";
+import {
+  isPrivateEndpointTargetCompatible,
+  isRoleAssignmentScopeCompatible,
+} from "../src/lib/schema/resources";
 import { generateProject } from "../src/lib/generate/hcl";
 import { graphEdgesForVisible } from "../src/lib/generate/graph-layout";
 import {
@@ -181,7 +188,57 @@ function main() {
   const all = [sharedRg, devApp, prodApp, stagingApp];
 
   // -------------------------------------------------------------------------
-  // 1. Shared vs env-scoped visibility / filtering + ref eligibility
+  // 1. Catalogue compatibility contracts
+  // -------------------------------------------------------------------------
+  {
+    const name = "target-role-compatibility";
+    invariant(
+      name,
+      isPrivateEndpointTargetCompatible("blob", "azurerm_storage_account"),
+      "blob must target Storage Account"
+    );
+    invariant(
+      name,
+      !isPrivateEndpointTargetCompatible("blob", "azurerm_key_vault"),
+      "blob must reject Key Vault"
+    );
+    invariant(
+      name,
+      isPrivateEndpointTargetCompatible(
+        "registry",
+        "azurerm_container_registry"
+      ),
+      "registry must target Container Registry"
+    );
+    invariant(
+      name,
+      isRoleAssignmentScopeCompatible(
+        "Storage Blob Data Contributor",
+        "azurerm_storage_account"
+      ),
+      "Storage Blob Data Contributor must target Storage Account"
+    );
+    invariant(
+      name,
+      !isRoleAssignmentScopeCompatible(
+        "AcrPull",
+        "azurerm_storage_account"
+      ),
+      "AcrPull must reject Storage Account"
+    );
+    invariant(
+      name,
+      isRoleAssignmentScopeCompatible(
+        "Key Vault Secrets User",
+        "azurerm_key_vault"
+      ),
+      "Key Vault Secrets User must target Key Vault"
+    );
+    console.log(`✓ [${name}] Private Endpoint and Role Assignment pairings`);
+  }
+
+  // -------------------------------------------------------------------------
+  // 2. Shared vs env-scoped visibility / filtering + ref eligibility
   // -------------------------------------------------------------------------
   {
     const name = "shared-vs-env-scoped";
@@ -348,6 +405,165 @@ function main() {
     );
 
     console.log(`✓ [${name}] canReference + picker + graph edge validity`);
+  }
+
+  // -------------------------------------------------------------------------
+  // 3. Nested reference cleanup and scope-compatible auto-wiring
+  // -------------------------------------------------------------------------
+  {
+    const name = "nested-reference-integrity";
+    const prodVault = res({
+      id: "prod-vault",
+      type: "azurerm_key_vault",
+      tfName: "prod",
+      scope: envScope("prod"),
+    });
+    const devVault = res({
+      id: "dev-vault",
+      type: "azurerm_key_vault",
+      tfName: "dev",
+      scope: envScope("dev"),
+    });
+    const vaultCandidates = filterRefCandidates([devApp, devVault, prodVault], {
+      currentId: devApp.id,
+      refTypes: ["azurerm_key_vault"],
+      activeEnvironmentId: "dev",
+      current: devApp,
+    });
+    invariant(
+      name,
+      vaultCandidates.some((candidate) => candidate.id === devVault.id) &&
+        !vaultCandidates.some((candidate) => candidate.id === prodVault.id),
+      "a dev Container App must exclude a prod Key Vault"
+    );
+    invariant(
+      name,
+      findScopeCompatibleResource({ scope: envScope("dev") }, [prodVault], "azurerm_key_vault") === undefined,
+      "catalogue auto-wiring must reject a target from another environment"
+    );
+
+    const appWithSecret = res({
+      id: "app-with-secret",
+      type: "azurerm_container_app",
+      tfName: "app",
+      scope: envScope("dev"),
+      values: {
+        name: "app-with-secret",
+        app_secrets: [
+          {
+            name: "api-key",
+            source: "key_vault",
+            key_vault_id: { resourceId: devVault.id, attr: "id" },
+            secret_name: "api-key",
+          },
+        ],
+      },
+    });
+    const afterDelete = mapResourceReferences(appWithSecret, (reference) =>
+      reference.resourceId === devVault.id ? undefined : reference
+    );
+    const secret = (afterDelete.values.app_secrets as Array<Record<string, unknown>>)[0];
+    invariant(name, !("key_vault_id" in secret), "deleting a vault must clear nested secret references");
+    const generated = generateProject(fixtureConfig, [afterDelete], envs);
+    invariant(
+      name,
+      !Object.values(generated.files).join("\n").includes("UNRESOLVED_REF"),
+      "generation must not emit unresolved references after vault deletion"
+    );
+    console.log(`✓ [${name}] scoped vault selection, auto-wiring, and nested deletion cleanup`);
+  }
+
+  // -------------------------------------------------------------------------
+  // 4. Scope changes clear references that would become cross-environment
+  // -------------------------------------------------------------------------
+  {
+    const name = "scope-change-clears-invalid-references";
+    const appWithReferences = res({
+      id: "app-with-refs",
+      type: "azurerm_container_app",
+      tfName: "app",
+      scope: envScope("dev"),
+      values: {
+        container_app_environment_id: { resourceId: "dev-app-env", attr: "id" },
+        resource_group_name: { resourceId: "rg", attr: "name" },
+        app_secrets: [
+          {
+            name: "api-key",
+            source: "key_vault",
+            key_vault_id: { resourceId: "dev-vault", attr: "id" },
+            secret_name: "api-key",
+          },
+        ],
+      },
+    });
+    const devAppEnvironment = res({
+      id: "dev-app-env",
+      type: "azurerm_container_app_environment",
+      tfName: "dev",
+      scope: envScope("dev"),
+    });
+    const devVault = res({
+      id: "dev-vault",
+      type: "azurerm_key_vault",
+      tfName: "dev",
+      scope: envScope("dev"),
+    });
+    const scopedResources = withScopeAndValidReferences(
+      appWithReferences,
+      sharedScope(),
+      [appWithReferences, devAppEnvironment, devVault, sharedRg]
+    );
+    const scoped = scopedResources.find((resource) => resource.id === appWithReferences.id)!;
+
+    invariant(name, scoped.scope.kind === "shared", "must apply the requested scope");
+    invariant(
+      name,
+      !("container_app_environment_id" in scoped.values),
+      "must clear an env-scoped top-level reference"
+    );
+    invariant(name, scoped.values.resource_group_name !== undefined, "must preserve a shared reference");
+    const secret = (scoped.values.app_secrets as Array<Record<string, unknown>>)[0];
+    invariant(
+      name,
+      !("key_vault_id" in secret),
+      "must clear a nested app-secret reference when it becomes cross-env"
+    );
+
+    const sharedTarget = res({
+      id: "shared-target",
+      type: "azurerm_container_app_environment",
+      tfName: "shared",
+      scope: sharedScope(),
+    });
+    const devDependent = res({
+      id: "dev-dependent",
+      type: "azurerm_container_app",
+      tfName: "dev",
+      scope: envScope("dev"),
+      values: {
+        container_app_environment_id: { resourceId: "shared-target", attr: "id" },
+      },
+    });
+    const movedTargetResources = withScopeAndValidReferences(
+      sharedTarget,
+      envScope("prod"),
+      [sharedTarget, devDependent]
+    );
+    const movedTarget = movedTargetResources.find((resource) => resource.id === sharedTarget.id)!;
+    const dependentAfterMove = movedTargetResources.find(
+      (resource) => resource.id === devDependent.id
+    )!;
+    invariant(
+      name,
+      movedTarget.scope.kind === "environment" && movedTarget.scope.environmentId === "prod",
+      "must move the target to prod"
+    );
+    invariant(
+      name,
+      !("container_app_environment_id" in dependentAfterMove.values),
+      "must clear an incoming dev reference to a target moved to prod"
+    );
+    console.log(`✓ [${name}] scope changes remove invalid exportable references`);
   }
 
   // -------------------------------------------------------------------------

@@ -11,11 +11,16 @@ import {
   envScope,
   filterRefCandidates,
   canReference,
+  mapResourceReferences,
   resourcesVisibleInEnv,
   sharedScope,
 } from "../src/lib/schema/environments";
 import { parseHcl, parseHclFiles } from "../src/lib/import/parse";
 import { mapToProject, mergeImportedResources } from "../src/lib/import/mapToProject";
+import {
+  createImportDiagnosticReport,
+  IMPORT_DIAGNOSTIC_REPORT_FILE_NAME,
+} from "../src/lib/import/report";
 import { isReferenceValue } from "../src/lib/schema/types";
 import {
   RESOURCE_TYPE_ORDER,
@@ -507,6 +512,20 @@ function main() {
   assert.ok(
     richGen.sensitiveVars.some((s) => s.name.includes("secret_api_key"))
   );
+  const richWithoutVault = rich
+    .filter((resource) => resource.id !== rKv)
+    .map((resource) =>
+      resource.id === rApp
+        ? mapResourceReferences(resource, (reference) =>
+            reference.resourceId === rKv ? undefined : reference
+          )
+        : resource
+    );
+  assert.doesNotMatch(
+    allHcl(generateProject(config, richWithoutVault).files),
+    /UNRESOLVED_REF/,
+    "removing a Key Vault must not leave an unresolved nested app secret reference"
+  );
   console.log("✓ Richer CA: env {, http_scale_rule, KV secret + auto RBAC");
 
   // 8) Preview
@@ -542,14 +561,14 @@ resource "azurerm_resource_group" "main" {
 }
 
 resource "azurerm_virtual_network" "main" {
-  name                = "vnet-main"
+  name                = "vnet-dev"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   address_space       = ["10.0.0.0/16"]
 }
 
 resource "azurerm_subnet" "default" {
-  name                 = "snet-default"
+  name                 = "snet-dev"
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = ["10.0.1.0/24"]
@@ -619,6 +638,39 @@ module "network" {
       envNamed?.scope.kind === "environment" ? envNamed.scope.environmentId : null,
       "dev"
     );
+
+    const nestedImported = mergeImportedResources([], [
+      {
+        id: "imported-vault",
+        type: "azurerm_key_vault",
+        tfName: "vault",
+        useExisting: false,
+        values: { name: "kv-imported" },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: "imported-app",
+        type: "azurerm_container_app",
+        tfName: "app",
+        useExisting: false,
+        values: {
+          name: "app-imported",
+          app_secrets: [{
+            name: "api-key",
+            source: "key_vault",
+            key_vault_id: { resourceId: "imported-vault", attr: "id" },
+            secret_name: "api-key",
+          }],
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+    ], "merge");
+    const mergedVault = nestedImported.find((resource) => resource.tfName === "vault")!;
+    const mergedApp = nestedImported.find((resource) => resource.tfName === "app")!;
+    const nestedVaultRef = (mergedApp.values.app_secrets as Array<{ key_vault_id: { resourceId: string } }>)[0].key_vault_id;
+    assert.equal(nestedVaultRef.resourceId, mergedVault.id, "merge must remap nested Key Vault references");
     console.log("✓ Import: RG/VNet/subnet refs + data source + unsupported/module skip");
 
     // Env-name + tags.Environment → env scope; plain names stay shared
@@ -701,7 +753,6 @@ resource "azurerm_container_app" "web" {
 
   // 12) Scope filtering + no cross-env refs in picker logic
   {
-    const envs = defaultEnvironments();
     const sharedRg: ResourceInstance = {
       id: "rg",
       type: "azurerm_resource_group",
@@ -900,7 +951,7 @@ resource "azurerm_storage_account" "main" {
 }
 
 resource "azurerm_service_plan" "func" {
-  name                = "asp-func"
+  name                = "asp-func-dev"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   os_type             = "Linux"
@@ -908,7 +959,7 @@ resource "azurerm_service_plan" "func" {
 }
 
 resource "azurerm_linux_function_app" "main" {
-  name                       = "func-import"
+  name                       = "func-import-dev"
   resource_group_name        = azurerm_resource_group.main.name
   location                   = azurerm_resource_group.main.location
   service_plan_id            = azurerm_service_plan.func.id
@@ -1149,6 +1200,119 @@ resource "azurerm_linux_function_app" "main" {
     console.log("✓ Application Insights catalogue + Function App optional ref");
   }
 
+  // 14d) Storage Container imports as a typed child of a Storage Account.
+  {
+    const fixture = `
+resource "azurerm_storage_account" "main" {
+  name                     = "stcontainerimport"
+  resource_group_name      = "rg-import"
+  location                 = "westeurope"
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_storage_container" "uploads" {
+  name                  = "uploads"
+  storage_account_id    = azurerm_storage_account.main.id
+  container_access_type = "private"
+}
+`;
+    const summary = mapToProject(parseHcl(fixture, "storage-container.tf"));
+    const storageAccount = summary.resources.find(
+      (resource) => resource.type === "azurerm_storage_account"
+    );
+    const container = summary.resources.find(
+      (resource) => resource.type === "azurerm_storage_container"
+    );
+    assert.ok(storageAccount);
+    assert.ok(container, "Storage Container should be imported");
+    assert.equal(container!.values.name, "uploads");
+    assert.equal(container!.values.container_access_type, "private");
+    assert.ok(isReferenceValue(container!.values.storage_account_id));
+
+    const generated = generateProject(config, summary.resources);
+    const storageHcl = generated.files["modules/storage/main.tf"];
+    assert.match(storageHcl, /resource "azurerm_storage_container" "uploads"/);
+    assert.match(storageHcl, /storage_account_id\s*=\s*azurerm_storage_account\.main\.id/);
+    assert.match(storageHcl, /container_access_type\s*=\s*"private"/);
+    console.log("✓ Storage Container HCL import + export");
+  }
+
+  // 14e) Import diagnostic reports contain only sanitized transient outcomes.
+  {
+    const secret = "Server=tcp:private.example;Password=not-for-report";
+    const parsed = parseHclFiles([
+      {
+        name: "C:/Users/example/private-config.tf",
+        content: `
+resource "azurerm_resource_group" "main" {
+  name = "rg-import"
+  location = "westeurope"
+  connection_string = "${secret}"
+}
+
+resource "azurerm_unknown_service" "unsupported" {}
+`,
+      },
+    ]);
+    parsed.warnings.push(`C:/Users/example/private-config.tf: ${secret}`);
+    parsed.warningUploadIndexes?.push(0);
+    const summary = mapToProject(parsed);
+    const report = createImportDiagnosticReport(
+      1,
+      parsed,
+      summary,
+      "2026-09-21T12:00:00.000Z"
+    );
+    const json = JSON.stringify(report);
+
+    assert.equal(IMPORT_DIAGNOSTIC_REPORT_FILE_NAME, "groko-import-report.json");
+    assert.equal(report.reportVersion, 2);
+    assert.equal(report.generatedAt, "2026-09-21T12:00:00.000Z");
+    assert.deepEqual(report.summary, {
+      filesRead: 1,
+      mappedResources: 1,
+      couldNotMap: 1,
+      partiallyMappedFields: 1,
+      notes: 2,
+    });
+    assert.deepEqual(report.outcomes.mapped[0], {
+      uploadIndex: 0,
+      sourcePath: null,
+      kind: "resource",
+      catalogueLabel: "Resource Group",
+      sourceType: "azurerm_resource_group",
+      sourceName: "main",
+      mappingStatus: "partiallyMapped",
+      mappedFieldNames: ["location", "name"],
+      unmappedFieldNames: ["connection_string"],
+      unsupportedConstructs: [],
+    });
+    assert.deepEqual(report.outcomes.skipped[0], {
+      uploadIndex: 0,
+      sourcePath: null,
+      kind: "resource",
+      sourceType: "azurerm_unknown_service",
+      sourceName: "unsupported",
+      reasonCode: "resource_type_not_supported",
+      reason: "Type not in RESOURCE_CATALOGUE",
+    });
+    assert.deepEqual(report.notes, [
+      {
+        uploadIndex: 0,
+        category: "mapping",
+        message: "Some fields could not be mapped.",
+      },
+      {
+        uploadIndex: 0,
+        category: "parse",
+        message: "Some source content could not be read.",
+      },
+    ]);
+    assert.doesNotMatch(json, /private-config|C:\/|Password=|Server=tcp|not-for-report/);
+    console.log("✓ Import diagnostic report sanitization");
+  }
+
 
 
 
@@ -1335,7 +1499,7 @@ resource "azurerm_linux_function_app" "main" {
     );
   }
 
-  // 17) PE catalogue: one type targets ACR | KV | SQL via subresource
+  // 17) PE catalogue: one type targets ACR | KV | SQL | Storage via subresource
   {
     const peDef = getResourceType("azurerm_private_endpoint");
     assert.ok(peDef);
@@ -1345,6 +1509,7 @@ resource "azurerm_linux_function_app" "main" {
     assert.ok(vals.includes("registry"));
     assert.ok(vals.includes("vault"));
     assert.ok(vals.includes("sqlServer"));
+    assert.ok(vals.includes("blob"));
     const target = peDef!.fields.find(
       (f) => f.key === "private_connection_resource_id"
     );
@@ -1353,10 +1518,182 @@ resource "azurerm_linux_function_app" "main" {
       "azurerm_container_registry",
       "azurerm_key_vault",
       "azurerm_mssql_server",
+      "azurerm_storage_account",
     ]) {
       assert.ok(target!.refTypes?.includes(t), `missing refType ${t}`);
     }
-    console.log("✓ PE catalogue: ACR | KV | SQL subresources + target refs");
+    console.log("✓ PE catalogue: ACR | KV | SQL | Storage subresources + target refs");
+  }
+
+  // 18) Static Storage PE, CAE infrastructure RG, and Blob Contributor role emit
+  {
+    const resourceGroupId = "rg-static";
+    const storageAccountId = "storage-static";
+    const identityId = "identity-static";
+    const privateZoneId = "zone-static";
+    const privateEndpointId = "endpoint-static";
+    const caeId = "cae-static";
+    const roleAssignmentId = "role-static";
+    const resources: ResourceInstance[] = [
+      {
+        id: resourceGroupId,
+        type: "azurerm_resource_group",
+        tfName: "main",
+        useExisting: false,
+        values: { name: "rg-static", location: "westeurope" },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: storageAccountId,
+        type: "azurerm_storage_account",
+        tfName: "blobstore",
+        useExisting: false,
+        values: {
+          name: "blobstorestatic",
+          resource_group_name: { resourceId: resourceGroupId, attr: "name" },
+          location: { resourceId: resourceGroupId, attr: "location" },
+          account_tier: "Standard",
+          account_replication_type: "LRS",
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: identityId,
+        type: "azurerm_user_assigned_identity",
+        tfName: "blob_reader",
+        useExisting: false,
+        values: {
+          name: "id-blob-reader",
+          resource_group_name: { resourceId: resourceGroupId, attr: "name" },
+          location: { resourceId: resourceGroupId, attr: "location" },
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: privateZoneId,
+        type: "azurerm_private_dns_zone",
+        tfName: "blob",
+        useExisting: false,
+        values: {
+          name: "privatelink.blob.core.windows.net",
+          resource_group_name: { resourceId: resourceGroupId, attr: "name" },
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: privateEndpointId,
+        type: "azurerm_private_endpoint",
+        tfName: "blob",
+        useExisting: false,
+        values: {
+          name: "pe-blob",
+          resource_group_name: { resourceId: resourceGroupId, attr: "name" },
+          location: { resourceId: resourceGroupId, attr: "location" },
+          subnet_id: "/subscriptions/example/subnets/private-endpoints",
+          private_connection_name: "psc-blob",
+          private_connection_resource_id: { resourceId: storageAccountId, attr: "id" },
+          subresource_names: "blob",
+          private_dns_zone_id: { resourceId: privateZoneId, attr: "id" },
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: caeId,
+        type: "azurerm_container_app_environment",
+        tfName: "main",
+        useExisting: false,
+        values: {
+          name: "cae-static",
+          resource_group_name: { resourceId: resourceGroupId, attr: "name" },
+          location: { resourceId: resourceGroupId, attr: "location" },
+          infrastructure_resource_group_name: "rg-cae-managed",
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: roleAssignmentId,
+        type: "azurerm_role_assignment",
+        tfName: "blob_contributor",
+        useExisting: false,
+        values: {
+          scope: { resourceId: storageAccountId, attr: "id" },
+          role_definition_name: "Storage Blob Data Contributor",
+          principal_id: { resourceId: identityId, attr: "principal_id" },
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+    ];
+    const generated = generateProject(config, resources);
+    const privateNetworking = generated.files["modules/private_networking/main.tf"];
+    const containerApps = generated.files["modules/container_apps/main.tf"];
+    const identity = generated.files["modules/identity/main.tf"];
+    assert.match(privateNetworking, /subresource_names\s*=\s*\["blob"\]/);
+    assert.match(privateNetworking, /private_dns_zone_group\s*\{/);
+    assert.match(containerApps, /infrastructure_resource_group_name\s*=\s*"rg-cae-managed"/);
+    assert.match(identity, /role_definition_name\s*=\s*"Storage Blob Data Contributor"/);
+    assert.match(identity, /scope\s*=\s*var\./);
+    console.log("✓ Static Storage PE, CAE infrastructure RG, and Blob Contributor emit");
+  }
+
+  // 19) Invalid legacy PE / Role Assignment pairs must never reach Terraform
+  {
+    const resources: ResourceInstance[] = [
+      {
+        id: "storage",
+        type: "azurerm_storage_account",
+        tfName: "data",
+        useExisting: false,
+        values: {},
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: "identity",
+        type: "azurerm_user_assigned_identity",
+        tfName: "app",
+        useExisting: false,
+        values: {},
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: "endpoint",
+        type: "azurerm_private_endpoint",
+        tfName: "legacy",
+        useExisting: false,
+        values: {
+          private_connection_resource_id: { resourceId: "storage", attr: "id" },
+          subresource_names: "vault",
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+      {
+        id: "assignment",
+        type: "azurerm_role_assignment",
+        tfName: "legacy",
+        useExisting: false,
+        values: {
+          scope: { resourceId: "storage", attr: "id" },
+          role_definition_name: "AcrPull",
+          principal_id: { resourceId: "identity", attr: "principal_id" },
+        },
+        existingValues: {},
+        scope: sharedScope(),
+      },
+    ];
+    const hcl = allHcl(generateProject(config, resources).files);
+    assert.match(hcl, /subresource_names\s*=\s*\["blob"\]/);
+    assert.doesNotMatch(hcl, /subresource_names\s*=\s*\["vault"\]/);
+    assert.doesNotMatch(hcl, /resource "azurerm_role_assignment" "legacy"/);
+    console.log("✓ Invalid legacy PE normalizes; invalid Role Assignment is omitted");
   }
 
   console.log("\nAll generate smoke tests passed.");

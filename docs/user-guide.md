@@ -42,10 +42,21 @@ Apply a starter to seed the graph (Blank, Web App + SQL, Storage + Function App,
 **Import existing** lives on Environment (header **Upload Terraform** is the same edge action — not a fourth main tab).
 
 1. **Upload** — one or more `.tf` / `.tfvars`, or a `.zip` of a Terraform root (client-side; JSZip for archives).
-2. **Review mapping** — domain table only: type label (Resource Group, VNet, …), name, **Existing | Create**, **Shared vs env**. Terraform type ids are muted secondary text. Edit scope/tier and Existing|Create before commit. Collapsed **Couldn't map** lists skipped types with plain-language reasons.
-3. **Confirm** — **Replace all** / **Merge into current** / **Cancel**. On **Prod**, Replace/Merge open Prod friction before commit.
+2. **Select profile**, when multiple root `.tfvars` files are present. Only the selected root profile supplies values; child-module `.tfvars` files are not profiles or module inputs.
+3. **Review mapping** — domain table with type, name, **Existing | Create**, and **Shared vs env**. Choose **Edit** on a row to correct required fields, lookup values, references, and compatible selections. Field errors and **Continue** update as you edit. Collapsed **Couldn't map** lists skipped types with plain-language reasons.
+4. **Confirm** — **Replace all** / **Merge into current** / **Cancel**. On **Prod**, Replace/Merge open Prod friction before commit.
 
-Rules of thumb: data sources → **Existing**; resources → **Create**. Env-ish names/tags suggest env scope (toggle before apply). Skips: modules, `for_each`/`count`, unknown providers, unsupported catalogue types, complex expressions. Best-effort — not a perfect round-trip.
+Rules of thumb: data sources → **Existing**; resources → **Create**. Env-ish names/tags suggest env scope (toggle before apply). Profile selection resolves inputs; it does not override scope inference or make cross-environment references valid.
+
+The editor uses only selected import-draft resources as reference targets, never the current project's resources. If mapping dropped a reference for scope safety, correct scope first, then explicitly choose a Shared or same-environment target. No scope is automatically promoted. Incompatible target/option pairs block **Continue** until corrected.
+
+**Done** or **Esc** closes the editor and returns focus to its **Edit** button. Edits remain in the draft, including when deselecting and reselecting a resource. Existing lookup values and Create fields are kept separately. **Cancel** discards the entire draft; a new upload/profile starts fresh. Nothing changes in the project or its undo history until Replace/Merge is confirmed. On small screens, import is available under **Environment → Project setup → Upload Terraform**.
+
+Uploaded local modules expand. Resource, data, and local-module `count` expressions that resolve to **0** emit nothing; **1** imports one instance. An indexed reference `[0]` binds only to that active counted instance. Unknown counts, counts above one, and invalid counts remain explicit skips. `for_each` still imports one module template for review, not every instance.
+
+Static variable/local aliases, comparisons, boolean operators, parentheses, conditional expressions, and scalar `coalesce` are supported. `coalesce` requires known scalar arguments of one non-null type and selects the first non-null, non-empty value. Module outputs can supply references or interpolate known scalar values, such as a Resource Group name with a `-managed` suffix. Unknown values never select a branch or fall back to catalogue defaults for an explicitly supplied unresolved field.
+
+Remote, missing, or dynamic module sources, unsupported providers, and unsupported catalogue types remain skipped. Client configuration is reported as a configuration lookup, not a deployable resource; Azure AzAPI is reported as an unsupported provider. General function evaluation (including `cidrsubnet`), dynamic blocks, and other complex expressions remain unsupported and appear in partial-mapping details. Review unresolved security, networking, identity, and retention settings before using an export. Missing required values block ordinary rows; `for_each` templates retain their explicit complete-after-import workflow. Import is best-effort, not a fully round-trippable Terraform evaluator.
 
 ---
 

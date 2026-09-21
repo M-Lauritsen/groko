@@ -3,6 +3,68 @@ import { AZURE_LOCATIONS } from "./types";
 
 const locOpts = AZURE_LOCATIONS;
 
+/** Private Link subresources supported by the catalogue target resources. */
+export const PRIVATE_ENDPOINT_TARGET_TYPE_BY_SUBRESOURCE = {
+  registry: "azurerm_container_registry",
+  vault: "azurerm_key_vault",
+  sqlServer: "azurerm_mssql_server",
+  blob: "azurerm_storage_account",
+} as const;
+
+const ROLE_ASSIGNMENT_SCOPE_TYPES_BY_ROLE: Record<string, string[]> = {
+  AcrPull: ["azurerm_container_registry"],
+  AcrPush: ["azurerm_container_registry"],
+  Reader: [
+    "azurerm_container_registry",
+    "azurerm_resource_group",
+    "azurerm_key_vault",
+    "azurerm_storage_account",
+  ],
+  Contributor: [
+    "azurerm_container_registry",
+    "azurerm_resource_group",
+    "azurerm_key_vault",
+    "azurerm_storage_account",
+  ],
+  "Key Vault Secrets User": ["azurerm_key_vault"],
+  "Storage Blob Data Contributor": ["azurerm_storage_account"],
+};
+
+export function privateEndpointSubresourceForTargetType(
+  targetType: string
+): string | undefined {
+  return Object.entries(PRIVATE_ENDPOINT_TARGET_TYPE_BY_SUBRESOURCE).find(
+    ([, type]) => type === targetType
+  )?.[0];
+}
+
+export function isPrivateEndpointTargetCompatible(
+  subresource: unknown,
+  targetType: string | undefined
+): boolean {
+  return (
+    typeof subresource === "string" &&
+    PRIVATE_ENDPOINT_TARGET_TYPE_BY_SUBRESOURCE[
+      subresource as keyof typeof PRIVATE_ENDPOINT_TARGET_TYPE_BY_SUBRESOURCE
+    ] === targetType
+  );
+}
+
+export function roleAssignmentScopeTypesForRole(role: unknown): string[] {
+  return typeof role === "string"
+    ? (ROLE_ASSIGNMENT_SCOPE_TYPES_BY_ROLE[role] ?? [])
+    : [];
+}
+
+export function isRoleAssignmentScopeCompatible(
+  role: unknown,
+  scopeType: string | undefined
+): boolean {
+  return Boolean(
+    scopeType && roleAssignmentScopeTypesForRole(role).includes(scopeType)
+  );
+}
+
 export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
   {
     type: "azurerm_resource_group",
@@ -1259,6 +1321,45 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
     ],
   },
   {
+    type: "azurerm_storage_container",
+    label: "Storage Container",
+    category: "Storage",
+    description: "Blob container in a Storage Account",
+    icon: "📦",
+    defaultName: "container",
+    outputs: ["id", "name"],
+    fields: [
+      {
+        key: "name",
+        label: "Name",
+        type: "string",
+        required: true,
+        defaultValue: "",
+        existingKey: true,
+        placeholder: "uploads",
+      },
+      {
+        key: "storage_account_id",
+        label: "Storage Account",
+        type: "reference",
+        required: true,
+        refTypes: ["azurerm_storage_account"],
+        refAttr: "id",
+      },
+      {
+        key: "container_access_type",
+        label: "Public access",
+        type: "select",
+        options: [
+          { value: "private", label: "Private" },
+          { value: "blob", label: "Blob" },
+          { value: "container", label: "Container" },
+        ],
+        defaultValue: "private",
+      },
+    ],
+  },
+  {
     type: "azurerm_log_analytics_workspace",
     label: "Log Analytics Workspace",
     category: "Containers",
@@ -1373,6 +1474,15 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
         refAttr: "id",
         description:
           "azurerm 4.x: use a delegated subnet (Microsoft.App/environments). When set, a Consumption workload_profile is emitted.",
+      },
+      {
+        key: "infrastructure_resource_group_name",
+        label: "Managed infrastructure resource group",
+        type: "string",
+        required: false,
+        advanced: true,
+        description:
+          "Optional resource group name for Azure-managed Container Apps infrastructure.",
       },
       {
         key: "internal_load_balancer_enabled",
@@ -1683,6 +1793,10 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
           { value: "Reader", label: "Reader" },
           { value: "Contributor", label: "Contributor" },
           { value: "Key Vault Secrets User", label: "Key Vault Secrets User" },
+          {
+            value: "Storage Blob Data Contributor",
+            label: "Storage Blob Data Contributor",
+          },
         ],
         defaultValue: "AcrPull",
       },
@@ -1808,7 +1922,7 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
     label: "Private Endpoint",
     category: "Networking",
     description:
-      "Private endpoint for ACR, Key Vault, or SQL. Pick subresource + target; DNS A records via private_dns_zone_group on the PE.",
+      "Private endpoint for ACR, Key Vault, SQL, or Storage blobs. Pick subresource + target; DNS A records via private_dns_zone_group on the PE.",
     icon: "🔒",
     defaultName: "main",
     outputs: ["id", "name"],
@@ -1857,6 +1971,7 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
           { value: "registry", label: "registry — Container Registry (ACR)" },
           { value: "vault", label: "vault — Key Vault" },
           { value: "sqlServer", label: "sqlServer — SQL Server" },
+          { value: "blob", label: "blob — Storage Account" },
         ],
         defaultValue: "registry",
         description:
@@ -1871,10 +1986,11 @@ export const RESOURCE_CATALOGUE: ResourceTypeDef[] = [
           "azurerm_container_registry",
           "azurerm_key_vault",
           "azurerm_mssql_server",
+          "azurerm_storage_account",
         ],
         refAttr: "id",
         description:
-          "ACR, Key Vault, or SQL Server to expose privately (must match Target type)",
+          "ACR, Key Vault, SQL Server, or Storage Account to expose privately (must match Target type)",
       },
       {
         key: "private_connection_name",

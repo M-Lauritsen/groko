@@ -55,6 +55,15 @@ Runs, in order:
 
 Targeted: `npm run test:invariants`, `test:generate`, `test:export-map`, `test:history`, `test:graph`, `test:prod-friction`, `test:empty-resources`.
 
+### Import review browser regression
+
+With the app running, `node scripts/test-import-review.mjs` checks synthetic uploads at desktop and mobile widths: field correction, reference scope, compatibility, Existing/Create, cancellation/history isolation, keyboard focus, profile reset, and the `for_each` exception. This is opt-in, separate from `npm test`, and requires Playwright plus an installed browser.
+
+- `GROKO_URL`: app URL (default `http://localhost:3100`).
+- `GROKO_BROWSER_MODULE`: optional module specifier or file URL to an existing Playwright installation; otherwise resolves `playwright` normally.
+- `PLAYWRIGHT_CHANNEL`: optional installed browser channel, such as `msedge`; otherwise uses Playwright Chromium.
+- Screenshots go to the OS temporary directory under `groko-import-review`, not the repository. Fixtures contain no credentials and do not use original infrastructure sources.
+
 ## How to add a catalogue type
 
 End-to-end checklist so a contributor can add a type **without reading the whole source**. Follow domain → UI → emit; finish with tests.

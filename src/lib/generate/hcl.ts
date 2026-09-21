@@ -11,7 +11,11 @@ import {
   AZURERM_VERSION,
 } from "../schema/types";
 import { defaultEnvironments } from "../schema/environments";
-import { getResourceType } from "../schema/resources";
+import {
+  getResourceType,
+  isRoleAssignmentScopeCompatible,
+  privateEndpointSubresourceForTargetType,
+} from "../schema/resources";
 import {
   MODULE_DEFS,
   moduleOrder,
@@ -71,6 +75,15 @@ function resolveRef(
 
 function sensitiveVarName(resource: ResourceInstance, fieldKey: string): string {
   return `${resource.tfName}_${fieldKey}`.replace(/[^a-zA-Z0-9_]/g, "_");
+}
+
+function referencedResourceType(
+  value: unknown,
+  resources: ResourceInstance[]
+): string | undefined {
+  return isReferenceValue(value)
+    ? resources.find((resource) => resource.id === value.resourceId)?.type
+    : undefined;
 }
 
 /** Path → file contents for the generated Terraform project (supports nested paths). */
@@ -987,10 +1000,11 @@ function emitPrivateEndpointBlock(
     typeof v.private_connection_name === "string" && v.private_connection_name
       ? v.private_connection_name
       : `psc-${resource.tfName}`;
-  const subresource =
-    typeof v.subresource_names === "string" && v.subresource_names
-      ? v.subresource_names
-      : "registry";
+  const targetType = referencedResourceType(
+    v.private_connection_resource_id,
+    resources
+  );
+  const subresource = privateEndpointSubresourceForTargetType(targetType ?? "")!;
   const target = v.private_connection_resource_id;
   const targetExpr = isReferenceValue(target)
     ? resolveRef(target, resources)
@@ -1031,6 +1045,28 @@ export function emitResourceBlock(
 
   if (resource.useExisting) {
     return emitDataBlock(resource, def.fields);
+  }
+
+  if (resource.type === "azurerm_private_endpoint") {
+    const targetType = referencedResourceType(
+      resource.values.private_connection_resource_id,
+      resources
+    );
+    if (!privateEndpointSubresourceForTargetType(targetType ?? "")) {
+      return `# Skipped Private Endpoint ${resource.tfName}: its target must be a supported resource reference.\n`;
+    }
+  }
+
+  if (resource.type === "azurerm_role_assignment") {
+    const scopeType = referencedResourceType(resource.values.scope, resources);
+    if (
+      !isRoleAssignmentScopeCompatible(
+        resource.values.role_definition_name,
+        scopeType
+      )
+    ) {
+      return `# Skipped Role Assignment ${resource.tfName}: its role is incompatible with the selected scope.\n`;
+    }
   }
 
   let body: string;

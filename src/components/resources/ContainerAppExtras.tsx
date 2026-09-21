@@ -1,8 +1,10 @@
 "use client";
 
+import { useId } from "react";
 import type { ContainerEnvVar, ContainerAppSecret, ReferenceValue, ResourceInstance } from "@/lib/schema/types";
 import { isReferenceValue } from "@/lib/schema/types";
 import { getResourceType } from "@/lib/schema/resources";
+import { canReference } from "@/lib/schema/environments";
 import {
   Label,
   Hint,
@@ -47,6 +49,7 @@ export function EnvVarsEditor({
   onChange: (next: ContainerEnvVar[]) => void;
 }) {
   const rows = asEnvList(value);
+  const editorId = useId();
 
   function update(i: number, patch: Partial<ContainerEnvVar>) {
     const next = rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r));
@@ -81,18 +84,18 @@ export function EnvVarsEditor({
           className="grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto] items-end rounded-md bg-slate-50 dark:bg-slate-900/50 p-2"
         >
           <div>
-            <Label htmlFor={`env-name-${i}`}>Name</Label>
+            <Label htmlFor={`${editorId}-env-name-${i}`}>Name</Label>
             <TextInput
-              id={`env-name-${i}`}
+              id={`${editorId}-env-name-${i}`}
               value={row.name}
               onChange={(e) => update(i, { name: e.target.value })}
               placeholder="ASPNETCORE_ENVIRONMENT"
             />
           </div>
           <div>
-            <Label htmlFor={`env-val-${i}`}>Value</Label>
+            <Label htmlFor={`${editorId}-env-val-${i}`}>Value</Label>
             <TextInput
-              id={`env-val-${i}`}
+              id={`${editorId}-env-val-${i}`}
               value={row.value ?? ""}
               onChange={(e) =>
                 update(i, { value: e.target.value, secret_name: "" })
@@ -102,9 +105,9 @@ export function EnvVarsEditor({
             />
           </div>
           <div>
-            <Label htmlFor={`env-sec-${i}`}>Secret name</Label>
+            <Label htmlFor={`${editorId}-env-sec-${i}`}>Secret name</Label>
             <TextInput
-              id={`env-sec-${i}`}
+              id={`${editorId}-env-sec-${i}`}
               value={row.secret_name ?? ""}
               onChange={(e) =>
                 update(i, {
@@ -134,15 +137,22 @@ export function AppSecretsEditor({
   onChange,
   resources,
   currentId,
+  errorId,
 }: {
   value: unknown;
   onChange: (next: ContainerAppSecret[]) => void;
   resources: ResourceInstance[];
   currentId: string;
+  errorId?: string;
 }) {
   const rows = asSecretList(value);
+  const editorId = useId();
+  const current = resources.find((resource) => resource.id === currentId);
   const vaults = resources.filter(
-    (r) => r.id !== currentId && r.type === "azurerm_key_vault"
+    (resource) =>
+      resource.id !== currentId &&
+      resource.type === "azurerm_key_vault" &&
+      (current ? canReference(current, resource) : false)
   );
 
   function update(i: number, patch: Partial<ContainerAppSecret>) {
@@ -184,18 +194,18 @@ export function AppSecretsEditor({
         >
           <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto] items-end">
             <div>
-              <Label htmlFor={`sec-name-${i}`}>Secret name</Label>
+              <Label htmlFor={`${editorId}-sec-name-${i}`}>Secret name</Label>
               <TextInput
-                id={`sec-name-${i}`}
+                id={`${editorId}-sec-name-${i}`}
                 value={row.name}
                 onChange={(e) => update(i, { name: e.target.value })}
                 placeholder="db-password"
               />
             </div>
             <div>
-              <Label htmlFor={`sec-src-${i}`}>Source</Label>
+              <Label htmlFor={`${editorId}-sec-src-${i}`}>Source</Label>
               <SelectInput
-                id={`sec-src-${i}`}
+                id={`${editorId}-sec-src-${i}`}
                 value={row.source}
                 onChange={(e) =>
                   update(i, {
@@ -218,11 +228,11 @@ export function AppSecretsEditor({
           </div>
           {row.source === "value" ? (
             <div>
-              <Label htmlFor={`sec-val-${i}`}>
+              <Label htmlFor={`${editorId}-sec-val-${i}`}>
                 Value <Badge tone="amber">sensitive → variable</Badge>
               </Label>
               <TextInput
-                id={`sec-val-${i}`}
+                id={`${editorId}-sec-val-${i}`}
                 type="password"
                 autoComplete="off"
                 value={row.value ?? ""}
@@ -233,13 +243,16 @@ export function AppSecretsEditor({
           ) : (
             <div className="grid gap-2 sm:grid-cols-2">
               <div>
-                <Label>Key Vault</Label>
+                <Label htmlFor={`${editorId}-sec-vault-${i}`}>Key Vault</Label>
                 {vaults.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                     Add a Key Vault resource first.
                   </div>
                 ) : (
                   <SelectInput
+                    id={`${editorId}-sec-vault-${i}`}
+                    aria-invalid={Boolean(errorId)}
+                    aria-describedby={errorId}
                     value={
                       isReferenceValue(row.key_vault_id)
                         ? row.key_vault_id.resourceId
@@ -278,9 +291,9 @@ export function AppSecretsEditor({
                 )}
               </div>
               <div>
-                <Label htmlFor={`sec-kvname-${i}`}>KV secret name</Label>
+                <Label htmlFor={`${editorId}-sec-kvname-${i}`}>KV secret name</Label>
                 <TextInput
-                  id={`sec-kvname-${i}`}
+                  id={`${editorId}-sec-kvname-${i}`}
                   value={row.secret_name ?? ""}
                   onChange={(e) => update(i, { secret_name: e.target.value })}
                   placeholder="my-app-secret"
