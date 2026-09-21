@@ -60,6 +60,11 @@ function main() {
   requireSource(/const invalidReferenceValidation[\s\S]*invalidReferenceFields\(resource, draft\)/, "revalidates reference integrity from the review draft after scope changes");
   requireSource(/const setDraftScope[\s\S]*updateDraft\(id, \{ scope: normalizeScope\(scope\) \}\)/, "preserves mapped references when a scope change makes one invalid");
   requireSource(/const invalidDraftCount[\s\S]*disabled=\{draft\.length === 0 \|\| invalidDraftCount > 0\}/, "blocks Continue while selected rows are incomplete");
+  requireSource(/mappingByResourceId\.get\(r\.id\)[\s\S]*Partially mapped[\s\S]*Unresolved fields:/, "shows session-only partial mapping details in the affected row");
+  requireSource(/const \[deselectedDraft, setDeselectedDraft\][\s\S]*const reselectDraftResource/, "retains deselected draft rows for same-session reselection");
+  requireSource(/referencesResource\(row\.values, id\)[\s\S]*still reference/, "identifies dependent selected rows before deselection");
+  requireSource(/aria-describedby=\{invalidReferenceFieldsForResource\.length > 0 \|\| invalidCompatibilityFieldsForResource\.length > 0 \? validationId : undefined\}/, "associates scope validation with the affected control");
+  requireSource(/aria-describedby=\{invalidDraftCount > 0 \? validationSummaryId : undefined\}/, "associates the blocking summary with Continue");
   requireSource(/Needs: \{missingFields\.join\(", "\)\}/, "shows missing fields on incomplete rows");
   requireSource(/Invalid reference: \{invalidReferenceFieldsForResource\.join\(", "\)\}/, "visibly identifies invalid references in their source rows");
   requireSource(/removeDraftResource[\s\S]*Deselect/, "lets users deselect an invalid row without silently changing it");

@@ -12,6 +12,7 @@ import {
   readImportUpload,
   type ImportUpload,
   type ImportSummary,
+  type MappedItem,
   type ParseResult,
   type RootTfvarsProfile,
   type SkippedItem,
@@ -64,6 +65,15 @@ function hasLiteralValue(value: unknown): boolean {
   if (typeof value === "number" || typeof value === "boolean") return true;
   if (Array.isArray(value)) return value.length > 0;
   return value !== null && value !== undefined && !isReferenceValue(value);
+}
+
+function referencesResource(value: unknown, resourceId: string): boolean {
+  if (isReferenceValue(value)) return value.resourceId === resourceId;
+  if (Array.isArray(value)) return value.some((item) => referencesResource(item, resourceId));
+  if (value && typeof value === "object") {
+    return Object.values(value).some((item) => referencesResource(item, resourceId));
+  }
+  return false;
 }
 
 function missingRequiredFields(
@@ -206,6 +216,11 @@ export function ImportTerraform({
   const [rootProfiles, setRootProfiles] = useState<RootTfvarsProfile[]>([]);
   const [selectedRootProfile, setSelectedRootProfile] = useState("");
   const [draft, setDraft] = useState<ResourceInstance[]>([]);
+  const [deselectedDraft, setDeselectedDraft] = useState<ResourceInstance[]>([]);
+  const [mappingByResourceId, setMappingByResourceId] = useState<Map<string, MappedItem>>(
+    () => new Map()
+  );
+  const [deselectionNotice, setDeselectionNotice] = useState("");
   const [skipped, setSkipped] = useState<SkippedItem[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [unmappedArgCount, setUnmappedArgCount] = useState(0);
@@ -232,6 +247,9 @@ export function ImportTerraform({
   const resetWizard = useCallback(() => {
     setStep("upload");
     setDraft([]);
+    setDeselectedDraft([]);
+    setMappingByResourceId(new Map());
+    setDeselectionNotice("");
     setSkipped([]);
     setWarnings([]);
     setFileCount(0);
@@ -266,6 +284,11 @@ export function ImportTerraform({
           scope: normalizeScope(r.scope),
         }))
       );
+      setDeselectedDraft([]);
+      setMappingByResourceId(
+        new Map(result.resources.map((resource, index) => [resource.id, result.mapped[index]]))
+      );
+      setDeselectionNotice("");
       setSkipped(result.skipped);
       setWarnings(result.warnings);
       setFileCount(result.fileCount);
@@ -352,7 +375,30 @@ export function ImportTerraform({
   );
 
   const removeDraftResource = useCallback((id: string) => {
-    setDraft((rows) => rows.filter((row) => row.id !== id));
+    setDraft((rows) => {
+      const removed = rows.find((row) => row.id === id);
+      if (!removed) return rows;
+      const dependents = rows.filter(
+        (row) => row.id !== id && referencesResource(row.values, id)
+      );
+      setDeselectedDraft((items) => [...items.filter((item) => item.id !== id), removed]);
+      setDeselectionNotice(
+        dependents.length > 0
+          ? `${resourceDisplayName(removed)} was deselected. ${dependents.length} selected resource${dependents.length === 1 ? " still references it" : "s still reference it"}.`
+          : `${resourceDisplayName(removed)} was deselected and can be reselected below.`
+      );
+      return rows.filter((row) => row.id !== id);
+    });
+  }, []);
+
+  const reselectDraftResource = useCallback((id: string) => {
+    setDeselectedDraft((items) => {
+      const resource = items.find((item) => item.id === id);
+      if (!resource) return items;
+      setDraft((rows) => [...rows, resource]);
+      setDeselectionNotice(`${resourceDisplayName(resource)} was reselected. Its preserved references are available again.`);
+      return items.filter((item) => item.id !== id);
+    });
   }, []);
 
   const draftValidation = useMemo(
@@ -373,6 +419,7 @@ export function ImportTerraform({
       (invalidReferenceValidation.get(resource.id)?.length ?? 0) > 0 ||
       (invalidCompatibilityValidation.get(resource.id)?.length ?? 0) > 0
   ).length;
+  const validationSummaryId = useId();
 
   const goConfirm = useCallback(() => {
     if (draft.length === 0 || invalidDraftCount > 0) return;
@@ -602,6 +649,17 @@ export function ImportTerraform({
         )}
       </div>
 
+      {invalidDraftCount > 0 && (
+        <p id={validationSummaryId} role="alert" className="text-sm text-rose-700 dark:text-rose-300">
+          {invalidDraftCount} selected resource{invalidDraftCount === 1 ? " needs" : "s need"} attention before continuing.
+        </p>
+      )}
+      {deselectionNotice && (
+        <p role="status" className="text-sm text-amber-800 dark:text-amber-200">
+          {deselectionNotice}
+        </p>
+      )}
+
       {draft.length > 0 ? (
         <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
           <table className="w-full text-sm text-left">
@@ -638,6 +696,11 @@ export function ImportTerraform({
                   invalidReferenceValidation.get(r.id) ?? [];
                 const invalidCompatibilityFieldsForResource =
                   invalidCompatibilityValidation.get(r.id) ?? [];
+                const mapping = mappingByResourceId.get(r.id);
+                const partialMapping = Boolean(
+                  mapping && (mapping.unmappedFieldNames.length > 0 || mapping.unsupportedConstructs.length > 0)
+                );
+                const validationId = `import-validation-${r.id}`;
                 return (
                   <tr key={r.id} className="bg-white dark:bg-slate-900">
                     <td className="px-3 py-2 align-top">
@@ -649,20 +712,19 @@ export function ImportTerraform({
                           <div className="font-medium text-slate-900 dark:text-slate-100">
                             {domainLabel(r.type)}
                           </div>
-                          {missingFields.length > 0 && (
-                            <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">
-                              Needs: {missingFields.join(", ")}
-                            </p>
+                          {partialMapping && (
+                            <div className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+                              <p>Partially mapped{mapping?.sourcePath ? ` from ${mapping.sourcePath}` : ""}.</p>
+                              {mapping?.unmappedFieldNames.length ? <p>Unresolved fields: {mapping.unmappedFieldNames.join(", ")}</p> : null}
+                              {mapping?.unsupportedConstructs.length ? <p>Unsupported: {mapping.unsupportedConstructs.join(", ")}</p> : null}
+                            </div>
                           )}
-                          {invalidReferenceFieldsForResource.length > 0 && (
-                            <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">
-                              Invalid reference: {invalidReferenceFieldsForResource.join(", ")}
-                            </p>
-                          )}
-                          {invalidCompatibilityFieldsForResource.length > 0 && (
-                            <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">
-                              Invalid selection: {invalidCompatibilityFieldsForResource.join(", ")}
-                            </p>
+                          {(missingFields.length > 0 || invalidReferenceFieldsForResource.length > 0 || invalidCompatibilityFieldsForResource.length > 0) && (
+                            <div id={validationId} className="mt-1 text-xs text-rose-700 dark:text-rose-300">
+                              {missingFields.length > 0 && <p>Needs: {missingFields.join(", ")}</p>}
+                              {invalidReferenceFieldsForResource.length > 0 && <p>Invalid reference: {invalidReferenceFieldsForResource.join(", ")}</p>}
+                              {invalidCompatibilityFieldsForResource.length > 0 && <p>Invalid selection: {invalidCompatibilityFieldsForResource.join(", ")}</p>}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -673,7 +735,7 @@ export function ImportTerraform({
                       </div>
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <fieldset>
+                      <fieldset aria-describedby={missingFields.length > 0 ? validationId : undefined}>
                         <legend className="sr-only">
                           Existing or create for {domainLabel(r.type)} {resourceDisplayName(r)}
                         </legend>
@@ -709,6 +771,7 @@ export function ImportTerraform({
                       </label>
                       <select
                         id={`scope-${r.id}`}
+                        aria-describedby={invalidReferenceFieldsForResource.length > 0 || invalidCompatibilityFieldsForResource.length > 0 ? validationId : undefined}
                         className="rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
                         value={scopeValue}
                         onChange={(e) => {
@@ -734,6 +797,7 @@ export function ImportTerraform({
                         variant="ghost"
                         size="sm"
                         aria-label={`Deselect ${domainLabel(r.type)} ${resourceDisplayName(r)}`}
+                        aria-describedby={validationId}
                         onClick={() => removeDraftResource(r.id)}
                       >
                         Deselect
@@ -750,6 +814,22 @@ export function ImportTerraform({
           No catalogue resources mapped. You can still review what couldn’t be
           mapped below, then add types from the catalogue after closing.
         </p>
+      )}
+
+      {deselectedDraft.length > 0 && (
+        <div className="border border-slate-200 dark:border-slate-700 p-3">
+          <p className="text-sm font-medium text-slate-900 dark:text-slate-100">Deselected resources</p>
+          <ul className="mt-2 space-y-2 text-sm text-slate-600 dark:text-slate-300">
+            {deselectedDraft.map((resource) => (
+              <li key={resource.id} className="flex flex-wrap items-center justify-between gap-2">
+                <span>{domainLabel(resource.type)}: {resourceDisplayName(resource)}</span>
+                <Button type="button" variant="secondary" size="sm" onClick={() => reselectDraftResource(resource.id)}>
+                  Reselect
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {skipped.length > 0 && (
@@ -944,7 +1024,7 @@ export function ImportTerraform({
           <Button type="button" variant="ghost" size="sm" onClick={compact ? closePane : cancelAll}>
             Cancel
           </Button>
-          <Button ref={continueButtonRef} type="button" variant="primary" size="sm" disabled={draft.length === 0 || invalidDraftCount > 0} onClick={goConfirm}>
+          <Button ref={continueButtonRef} type="button" variant="primary" size="sm" aria-describedby={invalidDraftCount > 0 ? validationSummaryId : undefined} disabled={draft.length === 0 || invalidDraftCount > 0} onClick={goConfirm}>
             Continue ({draft.length})
           </Button>
         </>

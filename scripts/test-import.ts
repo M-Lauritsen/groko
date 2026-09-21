@@ -376,6 +376,18 @@ resource "azurerm_resource_group" "interpolated_module_output" {
     "unsupported expressions should be reported and omitted rather than altered into domain values"
   );
 
+  const advisoryPartial = mapToProject(parseHclFiles([{
+    name: "advisory-partial.tf",
+    content: `resource "azurerm_resource_group" "advisory" {
+  name = "rg-advisory"
+  location = "westeurope"
+  unsupported_optional_setting = "ignored"
+}`,
+  }]));
+  assert.deepEqual(advisoryPartial.mapped[0]?.unmappedFieldNames, ["unsupported_optional_setting"]);
+  assert.equal(advisoryPartial.resources[0]?.values.name, "rg-advisory");
+  assert.equal(advisoryPartial.resources[0]?.values.location, "westeurope");
+
   const zip = new JSZip();
   zip.file("main.tf", `module "resource_group" { source = "./components/resource-group" }`);
   zip.file("components/resource-group/resource_group.tf", `resource "azurerm_resource_group" "this" { name = "rg-zip" location = "westeurope" }`);
