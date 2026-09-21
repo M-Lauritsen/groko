@@ -13,7 +13,9 @@ import {
 } from "./mapToProject";
 import {
   createImportDiagnosticReport,
+  getImportSkipDiagnostic,
   IMPORT_DIAGNOSTIC_REPORT_FILE_NAME,
+  safeImportSourcePath,
   type ImportDiagnosticReport,
 } from "./report";
 import {
@@ -24,6 +26,8 @@ import {
 
 export type {
   ImportDiagnosticReport,
+  ImportSkipDiagnostic,
+  ImportSkipReasonCode,
   ImportSummary,
   InvalidImportReference,
   MappedItem,
@@ -32,7 +36,9 @@ export type {
 };
 export {
   createImportDiagnosticReport,
+  getImportSkipDiagnostic,
   IMPORT_DIAGNOSTIC_REPORT_FILE_NAME,
+  safeImportSourcePath,
   parseHclFiles,
   mapToProject,
   mergeImportedResources,
@@ -55,14 +61,6 @@ export type ImportUpload = {
   files: UploadedTerraformFile[];
   rootProfiles: RootTfvarsProfile[];
 };
-
-function safeRelativePath(path: string): string | null {
-  const normalized = path.replace(/\\/g, "/");
-  if (/^[a-zA-Z]:\//.test(normalized) || normalized.startsWith("/")) return null;
-  const segments = normalized.split("/").filter(Boolean);
-  if (segments.length === 0 || segments.includes("..")) return null;
-  return segments.filter((segment) => segment !== ".").join("/");
-}
 
 function profileLabel(path: string): string {
   return path.split("/").at(-1)?.replace(/\.tfvars$/i, "") ?? path;
@@ -115,7 +113,7 @@ export async function readImportUpload(
   const profiles = new Map<string, RootTfvarsProfile>();
   for (const block of parsed.blocks) {
     if (block.kind !== "other" || block.type !== "tfvars" || !block.sourceHint) continue;
-    const path = safeRelativePath(block.sourceHint);
+    const path = safeImportSourcePath(block.sourceHint);
     if (!path) continue;
     profiles.set(path, { path, label: profileLabel(path), rootOnly: true });
   }
@@ -133,7 +131,19 @@ export function importFromUpload(
 ): ImportSummary & { fileCount: number; parse: ParseResult } {
   const parse = parseHclFiles(upload.files, selectedRootProfile);
   const summary = mapToProject(parse);
-  return { ...summary, fileCount: upload.files.length, parse };
+  return {
+    ...summary,
+    mapped: summary.mapped.map((item) => ({
+      ...item,
+      sourcePath: safeImportSourcePath(item.sourceHint),
+    })),
+    skipped: summary.skipped.map((item) => ({
+      ...item,
+      sourcePath: safeImportSourcePath(item.sourceHint),
+    })),
+    fileCount: upload.files.length,
+    parse,
+  };
 }
 
 export async function importFromFiles(

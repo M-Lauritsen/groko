@@ -45,6 +45,7 @@ export interface SkippedItem {
   reason: string;
   sourceIndex?: number;
   sourceHint?: string;
+  sourcePath?: string | null;
 }
 
 export interface MappedItem {
@@ -53,6 +54,7 @@ export interface MappedItem {
   name: string;
   sourceIndex?: number;
   sourceHint?: string;
+  sourcePath?: string | null;
   mappedFieldNames: string[];
   unmappedFieldNames: string[];
   unsupportedConstructs: string[];

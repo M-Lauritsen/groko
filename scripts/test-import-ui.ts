@@ -66,7 +66,8 @@ function main() {
   requireSource(/role="alert" aria-live="assertive"/, "announces upload failures assertively");
   requireSource(/setStatusMessage\("Import failed\. Nothing could be imported\."\)/, "does not announce mapping completion after an empty import");
   requireSource(/function skippedItemIdentity[\s\S]*\$\{skippedTitle\(s\)\}: \$\{s\.name/, "shows safe domain and source identities for skipped items");
-  requireSource(/const fallback =[\s\S]*group\.title === "Could not map this item"[\s\S]*groupKey/, "does not coalesce unrelated fallback skip reasons");
+  requireSource(/getImportSkipDiagnostic\(s\)[\s\S]*group\.reasonCode[\s\S]*groupKey/, "groups skipped items through the shared diagnostic reason code");
+  assert.doesNotMatch(source, /function plainSkipReason/, "does not classify skips with UI text matching");
   requireSource(/<details>[\s\S]*<summary[^>]*>Show \{g\.items\.length - 12\} more<\/summary>/, "uses a native keyboard-operable disclosure for truncated skipped items");
   requireSource(/<div aria-hidden="true" className="absolute inset-0" onClick=\{closePane\} \/>/, "keeps the compact modal backdrop out of keyboard focus");
   assert.equal((source.match(/role="status" aria-live="polite"/g) ?? []).length, 2, "renders one polite status region for each mutually exclusive layout");
@@ -74,13 +75,6 @@ function main() {
   requireSource(/if \(stepRef\.current === "confirm"\) returnToReview\(\);/, "returns from confirmation Escape to the preserved review draft");
   assert.doesNotMatch(source, /warnings\.slice\(/, "does not render raw parser warning text");
   assert.doesNotMatch(source, /Module calls are not imported/, "does not collapse module skips into one generic group");
-  requireSource(/title: "Remote module source"[\s\S]*Upload a local copy/, "groups remote module sources with next-step help");
-  requireSource(/title: "Local module files missing"[\s\S]*Include the local module files/, "groups missing local module files with next-step help");
-  requireSource(/title: "Dynamic module source"[\s\S]*Use a fixed local module source/, "groups dynamic module sources with next-step help");
-  requireSource(/title: "Module uses for_each or count"[\s\S]*Add each needed resource/, "groups module iteration with next-step help");
-  requireSource(/title: "Module cycle"[\s\S]*Break the module cycle/, "groups module cycles with next-step help");
-  requireSource(/title: "Unresolved module output"[\s\S]*connect it after import/, "groups unresolved module outputs with next-step help");
-  requireSource(/title: "Module could not be expanded"[\s\S]*resources from the catalogue/, "provides a fallback module expansion group");
   requireSource(/g\.items\.slice\(0, 12\)/, "keeps the per-group item limit");
   requireSource(/<ul className="mt-3[\s\S]*<ul className="mt-1/, "keeps semantic nested skip lists");
   assert.match(referencePickerSource, /const selectId = useId\(\);[\s\S]*<Label htmlFor=\{selectId\}[\s\S]*<SelectInput[\s\S]*id=\{selectId\}/, "connects each reference label to its select input");

@@ -6,6 +6,7 @@ import { saveAs } from "file-saver";
 import { useProject } from "@/lib/store/project-context";
 import {
   createImportDiagnosticReport,
+  getImportSkipDiagnostic,
   IMPORT_DIAGNOSTIC_REPORT_FILE_NAME,
   importFromUpload,
   readImportUpload,
@@ -151,69 +152,6 @@ type SkippedGroup = {
   items: SkippedItem[];
 };
 
-function plainSkipReason(s: SkippedItem): Pick<SkippedGroup, "title" | "help"> {
-  const reason = s.reason;
-  if (/Unresolved module output/i.test(reason)) {
-    return {
-      title: "Unresolved module output",
-      help: "Add the dependent resource from the catalogue and connect it after import.",
-    };
-  }
-  if (s.kind === "module") {
-    if (/is remote/i.test(reason)) {
-      return {
-        title: "Remote module source",
-        help: "Upload a local copy of this module, then import the files together.",
-      };
-    }
-    if (/not found in the upload/i.test(reason)) {
-      return {
-        title: "Local module files missing",
-        help: "Include the local module files in the upload, then try again.",
-      };
-    }
-    if (/static local path/i.test(reason)) {
-      return {
-        title: "Dynamic module source",
-        help: "Use a fixed local module source or add its resources from the catalogue.",
-      };
-    }
-    if (/for_each|count/i.test(reason)) {
-      return {
-        title: "Module uses for_each or count",
-        help: "Add each needed resource from the catalogue after import.",
-      };
-    }
-    if (/module cycle/i.test(reason)) {
-      return {
-        title: "Module cycle",
-        help: "Break the module cycle, then upload the local modules again.",
-      };
-    }
-    return {
-      title: "Module could not be expanded",
-      help: "Add the module's resources from the catalogue after import.",
-    };
-  }
-  if (
-    reason.includes("RESOURCE_CATALOGUE") ||
-    reason.includes("not in the catalogue") ||
-    reason.includes("not in catalogue")
-  ) {
-    return { title: "Not in the builder catalogue yet" };
-  }
-  if (/for_each/i.test(reason)) {
-    return { title: "Uses for_each (not supported in the importer)" };
-  }
-  if (/\bcount\b/i.test(reason)) {
-    return { title: "Uses count (not supported in the importer)" };
-  }
-  if (/non-azurerm|non-azure|provider/i.test(reason)) {
-    return { title: "Non-Azure provider — out of scope" };
-  }
-  return { title: "Could not map this item" };
-}
-
 function skippedTitle(s: SkippedItem): string {
   if (s.kind === "module") return "Module";
   return domainLabel(s.type);
@@ -228,11 +166,11 @@ function groupSkipped(
 ): SkippedGroup[] {
   const map = new Map<string, SkippedGroup>();
   for (const s of skipped) {
-    const group = plainSkipReason(s);
+    const group = getImportSkipDiagnostic(s);
     const fallback =
-      group.title === "Could not map this item" ||
-      group.title === "Module could not be expanded";
-    const groupKey = fallback ? `${group.title}:${s.kind}:${s.type}:${s.name}` : group.title;
+      group.reasonCode === "not_supported" ||
+      group.reasonCode === "module_not_supported";
+    const groupKey = fallback ? `${group.reasonCode}:${s.kind}:${s.type}:${s.name}` : group.reasonCode;
     const current = map.get(groupKey);
     if (current) {
       current.items.push(s);
