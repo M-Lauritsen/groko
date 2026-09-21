@@ -558,6 +558,11 @@ export function mapToProject(
     const unmappedFieldNames = new Set<string>();
     const unsupportedConstructs = new Set<string>();
 
+    if (block.templateNote) {
+      unsupportedConstructs.add(block.templateNote);
+      warnings.push(`${label}: ${block.templateNote}`);
+    }
+
     // defaults
     for (const f of typeDef.fields) {
       if (f.defaultValue !== undefined && !useExisting) {

@@ -194,6 +194,47 @@ resource "azurerm_resource_group" "this" {
       "module_output_unresolved",
     ]
   );
+
+  const templateNote = "Imported one template from for_each; each.* values need review";
+  const forEachModuleSummary = mapToProject(parseHclFiles([
+    {
+      name: "main.tf",
+      content: `
+module "template" {
+  source   = "./modules/resource-group"
+  for_each = { first = { name = "rg-template" } }
+}
+
+module "counted" {
+  source = "./modules/resource-group"
+  count  = 1
+}
+`,
+    },
+    {
+      name: "modules/resource-group/main.tf",
+      content: `
+resource "azurerm_resource_group" "this" {
+  name     = each.value.name
+  location = "westeurope"
+}
+`,
+    },
+  ]));
+  assert.equal(
+    forEachModuleSummary.resources.length,
+    1,
+    "a local for_each module should produce one template resource"
+  );
+  const templateResource = forEachModuleSummary.resources[0];
+  const mappedTemplate = forEachModuleSummary.mapped[0];
+  assert.ok(templateResource);
+  assert.ok(mappedTemplate);
+  assert.equal(templateResource.values.name, undefined, "each.value names should remain unmapped");
+  assert.deepEqual(mappedTemplate.unmappedFieldNames, ["name"]);
+  assert.deepEqual(mappedTemplate.unsupportedConstructs, [templateNote]);
+  assert.deepEqual(forEachModuleSummary.skipped.map((item) => item.name), ["counted"]);
+
   const moduleSession = importFromUpload({
     files: [
       {

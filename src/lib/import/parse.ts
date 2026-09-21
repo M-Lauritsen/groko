@@ -35,6 +35,8 @@ export interface ParsedBlock {
   sourceRoot?: string;
   /** Transient module expansion diagnostic; never enters the domain model. */
   moduleReason?: string;
+  /** Transient module expansion review note; never enters the domain model. */
+  templateNote?: string;
 }
 
 export interface ParseResult {
@@ -815,35 +817,47 @@ function expandModule(
   parentScope?: StaticValueResolver,
   outputPrefix = prefix
 ): ExpandedModule {
-  if (block.body.meta?.hasForEach || block.body.meta?.hasCount) {
+  if (block.body.meta?.hasCount) {
     return {
-      blocks: [{ ...block, moduleReason: block.body.meta.hasForEach ? "Module calls using for_each are not supported" : "Module calls using count are not supported" }],
+      blocks: [{ ...block, moduleReason: "Module calls using count are not supported" }],
       outputs: new Map(),
     };
   }
-  const source = block.body.attrs.source;
+  const expandedBlock = block.body.meta?.hasForEach
+    ? {
+        ...block,
+        body: {
+          ...block.body,
+          meta: { ...block.body.meta, hasForEach: undefined },
+        },
+        templateNote:
+          block.templateNote ??
+          "Imported one template from for_each; each.* values need review",
+      }
+    : block;
+  const source = expandedBlock.body.attrs.source;
   if (typeof source !== "string") {
     return {
-      blocks: [{ ...block, moduleReason: "Module source must be a static local path" }],
+      blocks: [{ ...expandedBlock, moduleReason: "Module source must be a static local path" }],
       outputs: new Map(),
     };
   }
   if (!isLocalModuleSource(source)) {
     return {
-      blocks: [{ ...block, moduleReason: `Module source \"${source}\" is remote; only uploaded local modules are expanded` }],
+      blocks: [{ ...expandedBlock, moduleReason: `Module source \"${source}\" is remote; only uploaded local modules are expanded` }],
       outputs: new Map(),
     };
   }
   const target = resolveLocalModulePath(directory, source);
   if (target === null || !filesByDirectory.has(target)) {
     return {
-      blocks: [{ ...block, moduleReason: `Local module source \"${source}\" was not found in the upload` }],
+      blocks: [{ ...expandedBlock, moduleReason: `Local module source \"${source}\" was not found in the upload` }],
       outputs: new Map(),
     };
   }
   if (visited.has(target)) {
     return {
-      blocks: [{ ...block, moduleReason: `Local module source \"${source}\" forms a module cycle` }],
+      blocks: [{ ...expandedBlock, moduleReason: `Local module source \"${source}\" forms a module cycle` }],
       outputs: new Map(),
     };
   }
@@ -851,7 +865,7 @@ function expandModule(
   const nextVisited = new Set(visited).add(target);
   const moduleBlocks = filesByDirectory.get(target) ?? [];
   const argumentsByName = Object.fromEntries(
-    Object.entries(block.body.attrs).map(([name, value]) => [
+    Object.entries(expandedBlock.body.attrs).map(([name, value]) => [
       name,
       parentScope?.resolve(value) ?? value,
     ])
@@ -873,15 +887,17 @@ function expandModule(
         name: names.get(`${child.kind}:${child.type}:${child.name}`) ?? child.name,
         labels: child.labels.map((label, index) => index === child.labels.length - 1 ? (names.get(`${child.kind}:${child.type}:${child.name}`) ?? label) : label),
         body: rewriteBody(child.body, argumentsByName, names, moduleScope),
-        sourceHint: block.sourceHint,
-        sourceIndex: block.sourceIndex,
+        sourceHint: expandedBlock.sourceHint,
+        sourceIndex: expandedBlock.sourceIndex,
+        templateNote: expandedBlock.templateNote,
       });
     } else if (child.kind === "module") {
       const nested = {
         ...child,
         body: rewriteBody(child.body, argumentsByName, names, moduleScope),
-        sourceHint: block.sourceHint,
-        sourceIndex: block.sourceIndex,
+        sourceHint: expandedBlock.sourceHint,
+        sourceIndex: expandedBlock.sourceIndex,
+        templateNote: expandedBlock.templateNote,
       };
       const nestedModule = expandModule(
         nested,

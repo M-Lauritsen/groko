@@ -47,6 +47,11 @@ import { ProdFrictionDialog } from "@/components/project/ProdFrictionDialog";
 
 type WizardStep = "upload" | "profile" | "review" | "confirm";
 type ApplyMode = "merge" | "replace";
+const FOR_EACH_TEMPLATE_NOTE = "Imported one template from for_each; each.* values need review";
+
+function isForEachTemplate(mapping: MappedItem | undefined): boolean {
+  return mapping?.unsupportedConstructs.includes(FOR_EACH_TEMPLATE_NOTE) ?? false;
+}
 
 function domainLabel(type: string): string {
   return getResourceType(type)?.label ?? "Unknown resource";
@@ -415,7 +420,8 @@ export function ImportTerraform({
   );
   const invalidDraftCount = draft.filter(
     (resource) =>
-      (draftValidation.get(resource.id)?.length ?? 0) > 0 ||
+      (!isForEachTemplate(mappingByResourceId.get(resource.id)) &&
+        (draftValidation.get(resource.id)?.length ?? 0) > 0) ||
       (invalidReferenceValidation.get(resource.id)?.length ?? 0) > 0 ||
       (invalidCompatibilityValidation.get(resource.id)?.length ?? 0) > 0
   ).length;
@@ -697,6 +703,8 @@ export function ImportTerraform({
                 const invalidCompatibilityFieldsForResource =
                   invalidCompatibilityValidation.get(r.id) ?? [];
                 const mapping = mappingByResourceId.get(r.id);
+                const templateDraft = isForEachTemplate(mapping);
+                const blockingMissingFields = templateDraft ? [] : missingFields;
                 const partialMapping = Boolean(
                   mapping && (mapping.unmappedFieldNames.length > 0 || mapping.unsupportedConstructs.length > 0)
                 );
@@ -717,11 +725,12 @@ export function ImportTerraform({
                               <p>Partially mapped{mapping?.sourcePath ? ` from ${mapping.sourcePath}` : ""}.</p>
                               {mapping?.unmappedFieldNames.length ? <p>Unresolved fields: {mapping.unmappedFieldNames.join(", ")}</p> : null}
                               {mapping?.unsupportedConstructs.length ? <p>Unsupported: {mapping.unsupportedConstructs.join(", ")}</p> : null}
+                              {templateDraft && missingFields.length > 0 ? <p>Complete after import: {missingFields.join(", ")}.</p> : null}
                             </div>
                           )}
-                          {(missingFields.length > 0 || invalidReferenceFieldsForResource.length > 0 || invalidCompatibilityFieldsForResource.length > 0) && (
+                          {(blockingMissingFields.length > 0 || invalidReferenceFieldsForResource.length > 0 || invalidCompatibilityFieldsForResource.length > 0) && (
                             <div id={validationId} className="mt-1 text-xs text-rose-700 dark:text-rose-300">
-                              {missingFields.length > 0 && <p>Needs: {missingFields.join(", ")}</p>}
+                              {blockingMissingFields.length > 0 && <p>Needs: {blockingMissingFields.join(", ")}</p>}
                               {invalidReferenceFieldsForResource.length > 0 && <p>Invalid reference: {invalidReferenceFieldsForResource.join(", ")}</p>}
                               {invalidCompatibilityFieldsForResource.length > 0 && <p>Invalid selection: {invalidCompatibilityFieldsForResource.join(", ")}</p>}
                             </div>
@@ -735,7 +744,7 @@ export function ImportTerraform({
                       </div>
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <fieldset aria-describedby={missingFields.length > 0 ? validationId : undefined}>
+                      <fieldset aria-describedby={blockingMissingFields.length > 0 ? validationId : undefined}>
                         <legend className="sr-only">
                           Existing or create for {domainLabel(r.type)} {resourceDisplayName(r)}
                         </legend>
