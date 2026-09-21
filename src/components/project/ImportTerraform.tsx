@@ -44,10 +44,17 @@ import {
 } from "@/lib/schema/types";
 import { shouldGateDestructiveApplyOnProd } from "@/lib/store/prod-friction";
 import { ProdFrictionDialog } from "@/components/project/ProdFrictionDialog";
+import { ImportDraftResourceForm } from "@/components/project/ImportDraftResourceForm";
 
 type WizardStep = "upload" | "profile" | "review" | "confirm";
 type ApplyMode = "merge" | "replace";
 const FOR_EACH_TEMPLATE_NOTE = "Imported one template from for_each; each.* values need review";
+
+function isolateDraftHistory(event: React.KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && ["z", "y"].includes(event.key.toLowerCase())) {
+    event.stopPropagation();
+  }
+}
 
 function isForEachTemplate(mapping: MappedItem | undefined): boolean {
   return mapping?.unsupportedConstructs.includes(FOR_EACH_TEMPLATE_NOTE) ?? false;
@@ -112,15 +119,30 @@ function invalidReferenceFields(
   if (!def) return [];
 
   return def.fields
-    .filter((field) => field.type === "reference")
+    .filter((field) => !resource.useExisting || field.existingKey)
+    .filter((field) => field.type === "reference" || field.type === "secret_list" ||
+      isReferenceValue(resource.useExisting ? resource.existingValues[field.key] ?? resource.values[field.key] : resource.values[field.key]))
     .filter((field) => {
-      const value = resource.values[field.key];
+      const value = resource.useExisting
+        ? resource.existingValues[field.key] ?? resource.values[field.key]
+        : resource.values[field.key];
+      if (field.type === "secret_list" && Array.isArray(value)) {
+        return value.some((secret) => {
+          if (!secret || secret.source !== "key_vault") return false;
+          const reference = secret.key_vault_id;
+          if (!isReferenceValue(reference)) return true;
+          const target = draft.find((candidate) => candidate.id === reference.resourceId);
+          return !target || target.type !== "azurerm_key_vault" || reference.attr !== "id" || !canReference(resource, target);
+        });
+      }
       if (!isReferenceValue(value)) return false;
       const target = draft.find((candidate) => candidate.id === value.resourceId);
       return (
         !target ||
-        !field.refTypes?.includes(target.type) ||
+        target.id === resource.id ||
+        (field.type === "reference" && !field.refTypes?.includes(target.type)) ||
         !getResourceType(target.type)?.outputs.includes(value.attr) ||
+        (field.type === "reference" && value.attr !== (field.refAttr ?? "id")) ||
         !canReference(resource, target)
       );
     })
@@ -131,6 +153,7 @@ function invalidCompatibilityFields(
   resource: ResourceInstance,
   draft: ResourceInstance[]
 ): string[] {
+  if (resource.useExisting) return [];
   if (resource.type === "azurerm_private_endpoint") {
     const target = resource.values.private_connection_resource_id;
     const targetType = isReferenceValue(target)
@@ -222,6 +245,8 @@ export function ImportTerraform({
   const [selectedRootProfile, setSelectedRootProfile] = useState("");
   const [draft, setDraft] = useState<ResourceInstance[]>([]);
   const [deselectedDraft, setDeselectedDraft] = useState<ResourceInstance[]>([]);
+  const [editingResourceId, setEditingResourceId] = useState<string | null>(null);
+  const editButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const [mappingByResourceId, setMappingByResourceId] = useState<Map<string, MappedItem>>(
     () => new Map()
   );
@@ -253,6 +278,7 @@ export function ImportTerraform({
     setStep("upload");
     setDraft([]);
     setDeselectedDraft([]);
+    setEditingResourceId(null);
     setMappingByResourceId(new Map());
     setDeselectionNotice("");
     setSkipped([]);
@@ -290,6 +316,7 @@ export function ImportTerraform({
         }))
       );
       setDeselectedDraft([]);
+      setEditingResourceId(null);
       setMappingByResourceId(
         new Map(result.resources.map((resource, index) => [resource.id, result.mapped[index]]))
       );
@@ -379,11 +406,36 @@ export function ImportTerraform({
     [updateDraft]
   );
 
+  const updateDraftValue = (id: string, key: string, value: unknown) => {
+    setDraft((rows) => rows.map((resource) => {
+      if (resource.id !== id) return resource;
+      const valuesKey = resource.useExisting ? "existingValues" : "values";
+      return { ...resource, [valuesKey]: { ...resource[valuesKey], [key]: resource.useExisting ? value ?? "" : value } };
+    }));
+  };
+
+  const closeDraftEditor = () => {
+    const id = editingResourceId;
+    setEditingResourceId(null);
+    requestAnimationFrame(() => {
+      if (id) editButtonRefs.current.get(id)?.focus();
+    });
+  };
+
+  const handleDraftKeyDown = (event: React.KeyboardEvent) => {
+    isolateDraftHistory(event);
+    if (event.key === "Escape" && editingResourceId) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeDraftEditor();
+    }
+  };
+
   const removeDraftResource = useCallback((id: string) => {
-    setDraft((rows) => {
-      const removed = rows.find((row) => row.id === id);
-      if (!removed) return rows;
-      const dependents = rows.filter(
+    setEditingResourceId((current) => current === id ? null : current);
+      const removed = draft.find((row) => row.id === id);
+      if (!removed) return;
+      const dependents = draft.filter(
         (row) => row.id !== id && referencesResource(row.values, id)
       );
       setDeselectedDraft((items) => [...items.filter((item) => item.id !== id), removed]);
@@ -392,19 +444,18 @@ export function ImportTerraform({
           ? `${resourceDisplayName(removed)} was deselected. ${dependents.length} selected resource${dependents.length === 1 ? " still references it" : "s still reference it"}.`
           : `${resourceDisplayName(removed)} was deselected and can be reselected below.`
       );
-      return rows.filter((row) => row.id !== id);
-    });
-  }, []);
+      setDraft((rows) => rows.filter((row) => row.id !== id));
+      requestAnimationFrame(() => document.getElementById(`reselect-${id}`)?.focus());
+  }, [draft]);
 
   const reselectDraftResource = useCallback((id: string) => {
-    setDeselectedDraft((items) => {
-      const resource = items.find((item) => item.id === id);
-      if (!resource) return items;
-      setDraft((rows) => [...rows, resource]);
+      const resource = deselectedDraft.find((item) => item.id === id);
+      if (!resource) return;
+      setDraft((rows) => rows.some((row) => row.id === id) ? rows : [...rows, resource]);
       setDeselectionNotice(`${resourceDisplayName(resource)} was reselected. Its preserved references are available again.`);
-      return items.filter((item) => item.id !== id);
-    });
-  }, []);
+      setDeselectedDraft((items) => items.filter((item) => item.id !== id));
+      requestAnimationFrame(() => editButtonRefs.current.get(id)?.focus());
+  }, [deselectedDraft]);
 
   const draftValidation = useMemo(
     () => new Map(draft.map((resource) => [resource.id, missingRequiredFields(resource, draft)])),
@@ -429,6 +480,7 @@ export function ImportTerraform({
 
   const goConfirm = useCallback(() => {
     if (draft.length === 0 || invalidDraftCount > 0) return;
+    setEditingResourceId(null);
     setStep("confirm");
     requestAnimationFrame(() => confirmTitleRef.current?.focus());
   }, [draft.length, invalidDraftCount]);
@@ -440,26 +492,26 @@ export function ImportTerraform({
 
   const commitImport = useCallback(
     (mode: ApplyMode) => {
-      if (draft.length === 0) return;
+      if (draft.length === 0 || invalidDraftCount > 0) return;
       // Commit domain ResourceInstances only (labels/scopes/existing/values).
       importResources(draft, mode);
       resetWizard();
       setPaneOpen(false);
       onImported?.();
     },
-    [draft, importResources, onImported, resetWizard]
+    [draft, invalidDraftCount, importResources, onImported, resetWizard]
   );
 
   const apply = useCallback(
     (mode: ApplyMode) => {
-      if (draft.length === 0) return;
+      if (draft.length === 0 || invalidDraftCount > 0) return;
       if (shouldGateDestructiveApplyOnProd(mode, activeEnv)) {
         setProdPendingMode(mode);
         return;
       }
       commitImport(mode);
     },
-    [draft.length, activeEnv, commitImport]
+    [draft.length, invalidDraftCount, activeEnv, commitImport]
   );
 
   const cancelAll = useCallback(() => {
@@ -590,6 +642,7 @@ export function ImportTerraform({
   }, [compact, paneOpen, prodPendingMode]);
 
   const skippedGroups = useMemo(() => groupSkipped(skipped), [skipped]);
+  const editingResource = draft.find((resource) => resource.id === editingResourceId);
 
   const fileInput = (
     <input
@@ -664,6 +717,21 @@ export function ImportTerraform({
         <p role="status" className="text-sm text-amber-800 dark:text-amber-200">
           {deselectionNotice}
         </p>
+      )}
+
+      {editingResource && (
+        <ImportDraftResourceForm
+          key={`${editingResource.id}-${editingResource.useExisting}`}
+          resource={editingResource}
+          resources={draft}
+          environments={environments}
+          activeEnvironmentId={state.activeEnvironmentId}
+          missingFields={isForEachTemplate(mappingByResourceId.get(editingResource.id)) ? [] : draftValidation.get(editingResource.id) ?? []}
+          invalidReferences={invalidReferenceValidation.get(editingResource.id) ?? []}
+          invalidCompatibility={invalidCompatibilityValidation.get(editingResource.id) ?? []}
+          onChange={(key, value) => updateDraftValue(editingResource.id, key, value)}
+          onClose={closeDraftEditor}
+        />
       )}
 
       {draft.length > 0 ? (
@@ -802,6 +870,24 @@ export function ImportTerraform({
                     </td>
                     <td className="px-3 py-2 align-top">
                       <Button
+                        ref={(element) => {
+                          if (element) editButtonRefs.current.set(r.id, element);
+                          else editButtonRefs.current.delete(r.id);
+                        }}
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        aria-label={`Edit ${domainLabel(r.type)} ${resourceDisplayName(r)}`}
+                        aria-expanded={editingResourceId === r.id}
+                        aria-controls={editingResourceId === r.id ? `import-editor-${r.id}` : undefined}
+                        onClick={() => {
+                          if (editingResourceId === r.id) closeDraftEditor();
+                          else setEditingResourceId(r.id);
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      <Button
                         type="button"
                         variant="ghost"
                         size="sm"
@@ -832,7 +918,7 @@ export function ImportTerraform({
             {deselectedDraft.map((resource) => (
               <li key={resource.id} className="flex flex-wrap items-center justify-between gap-2">
                 <span>{domainLabel(resource.type)}: {resourceDisplayName(resource)}</span>
-                <Button type="button" variant="secondary" size="sm" onClick={() => reselectDraftResource(resource.id)}>
+                <Button id={`reselect-${resource.id}`} type="button" variant="secondary" size="sm" onClick={() => reselectDraftResource(resource.id)}>
                   Reselect
                 </Button>
               </li>
@@ -1062,7 +1148,7 @@ export function ImportTerraform({
           Import existing
         </Button>
         {paneOpen && createPortal(
-          <div data-import-pane className="fixed inset-0 z-50 flex justify-end bg-black/40">
+          <div data-import-pane className="fixed inset-0 z-50 flex justify-end bg-black/40" onKeyDown={handleDraftKeyDown}>
             <div aria-hidden="true" className="absolute inset-0" onClick={closePane} />
             <div
               ref={dialogRef}
@@ -1120,10 +1206,11 @@ export function ImportTerraform({
       <div
         className="mt-4"
         ref={step === "confirm" || step === "review" ? dialogRef : undefined}
+        onKeyDown={handleDraftKeyDown}
       >
         {body}
       </div>
-      <div className="mt-4">{actions}</div>
+      <div className="mt-4" onKeyDown={handleDraftKeyDown}>{actions}</div>
       <p className="sr-only" role="status" aria-live="polite">{statusMessage}</p>
 
       {prodPendingMode && activeEnv && createPortal(

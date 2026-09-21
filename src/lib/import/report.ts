@@ -13,6 +13,7 @@ export type ImportSkipReasonCode =
   | "module_not_supported"
   | "module_output_unresolved"
   | "provider_not_supported"
+  | "configuration_lookup"
   | "resource_type_not_supported"
   | "for_each_not_supported"
   | "count_not_supported"
@@ -82,7 +83,7 @@ export function getImportSkipDiagnostic(item: SkippedItem): ImportSkipDiagnostic
       return { reasonCode: "module_source_dynamic", title: "Dynamic module source", actionability: "repair", help: "Use a fixed local module source or add its resources from the catalogue." };
     }
     if (item.reason.includes("for_each") || item.reason.includes("count")) {
-      return { reasonCode: "module_instance_not_supported", title: "Module uses for_each or count", actionability: "repair", help: "Add each needed resource from the catalogue after import." };
+      return { reasonCode: "module_instance_not_supported", title: "Module instance count could not be resolved", actionability: "repair", help: "Select a root profile that resolves count to 0 or 1, or add the instances from the catalogue." };
     }
     if (item.reason.includes("cycle")) {
       return { reasonCode: "module_cycle", title: "Module cycle", actionability: "repair", help: "Break the module cycle, then upload the local modules again." };
@@ -93,7 +94,10 @@ export function getImportSkipDiagnostic(item: SkippedItem): ImportSkipDiagnostic
     return { reasonCode: "module_output_unresolved", title: "Unresolved module output", actionability: "repair", help: "Add the dependent resource from the catalogue and connect it after import." };
   }
   if (item.reason.includes("Non-azurerm")) {
-    return { reasonCode: "provider_not_supported", title: "Non-Azure provider — out of scope", actionability: "informational" };
+    return { reasonCode: "provider_not_supported", title: item.type.startsWith("azapi_") ? "Azure AzAPI provider is not supported" : "Provider is not supported", actionability: "informational" };
+  }
+  if (item.reason.includes("Client configuration lookup")) {
+    return { reasonCode: "configuration_lookup", title: "Client configuration lookup (not a resource)", actionability: "informational", help: "Values that depend on the current client must be supplied explicitly." };
   }
   if (item.reason.includes("RESOURCE_CATALOGUE")) {
     return { reasonCode: "resource_type_not_supported", title: "Not in the builder catalogue yet", actionability: "informational" };
@@ -102,7 +106,7 @@ export function getImportSkipDiagnostic(item: SkippedItem): ImportSkipDiagnostic
     return { reasonCode: "for_each_not_supported", title: "Uses for_each (not supported in the importer)", actionability: "informational" };
   }
   if (item.reason.includes("count")) {
-    return { reasonCode: "count_not_supported", title: "Uses count (not supported in the importer)", actionability: "informational" };
+    return { reasonCode: "count_not_supported", title: "Count must resolve to 0 or 1", actionability: "repair", help: "Select a root profile or add unsupported instances from the catalogue." };
   }
   return { reasonCode: "not_supported", title: "Could not map this item", actionability: "informational" };
 }

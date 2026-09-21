@@ -26,6 +26,14 @@ function requireSource(pattern: RegExp, description: string) {
 function main() {
   console.log("Groko import pane UI checks\n");
 
+  requireSource(/<ImportDraftResourceForm[\s\S]*resources=\{draft\}/, "edits references against the import draft, never the live project");
+  requireSource(/const \[editingResourceId, setEditingResourceId\]/, "tracks the editor by stable resource identity");
+  requireSource(/aria-expanded=\{editingResourceId === r.id\}/, "exposes the active row editor to assistive technology");
+  const draftFormSource = readFileSync(resolve("src/components/project/ImportDraftResourceForm.tsx"), "utf8");
+  assert.doesNotMatch(draftFormSource, /useProject|importResources|updateResourceValue/, "draft editor cannot mutate the live project store");
+  assert.match(draftFormSource, /aria-invalid=\{Boolean\(error\)\}[\s\S]*aria-describedby=\{errorId\}/, "associates draft field errors with their controls");
+  assert.match(draftFormSource, /headingRef\.current\?\.focus\(\)/, "focuses the draft editor heading on entry");
+  assert.match(containerAppExtrasSource, /htmlFor=\{`\$\{editorId\}-sec-vault-\$\{i\}`\}/, "labels nested draft reference controls with unique IDs");
   requireSource(/createImportDiagnosticReport/, "uses the sanitized diagnostic report helper");
   requireSource(/IMPORT_DIAGNOSTIC_REPORT_FILE_NAME/, "uses the report helper filename");
   requireSource(/saveAs\([\s\S]*JSON\.stringify\(report, null, 2\)/, "downloads serialized report JSON locally");

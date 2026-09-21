@@ -18,8 +18,263 @@ import {
 } from "../src/lib/import";
 import { mergeImportedResources } from "../src/lib/import/mapToProject";
 import { sharedScope } from "../src/lib/schema/environments";
+import { tokenize } from "../src/lib/import/tokenize";
 
 async function main() {
+  const conditionalFiles = [
+    { name: "main.tf", content: `
+variable "environment" {}
+locals { deploy = var.environment != "edt" && !(var.environment == "off") }
+resource "azurerm_resource_group" "created" {
+  count = local.deploy ? 1 : 0
+  name = "rg-example"
+  location = "westeurope"
+}
+data "azurerm_resource_group" "existing" {
+  count = local.deploy ? 0 : 1
+  name = "rg-existing"
+}
+module "backend" {
+  count = local.deploy ? 1 : 0
+  source = "./backend"
+  name = "rg-backend"
+}
+resource "azurerm_container_app_environment" "app" {
+  name = "cae-example"
+  resource_group_name = local.deploy ? azurerm_resource_group.created[0].name : data.azurerm_resource_group.existing[0].name
+  location = "westeurope"
+  infrastructure_resource_group_name = local.deploy ? "\${module.backend[0].name}-managed" : "rg-existing-managed"
+  zone_redundancy_enabled = var.environment == "prd"
+}
+resource "azurerm_resource_group" "unknown" { count = var.missing ? 1 : 0 }
+resource "azurerm_resource_group" "many" { count = 2 }
+` },
+    { name: "backend/main.tf", content: `
+variable "name" {}
+resource "azurerm_resource_group" "main" { name = var.name location = "westeurope" }
+output "name" { value = azurerm_resource_group.main.name }
+` },
+    { name: "editor.tfvars", content: 'environment = "edt"' },
+    { name: "prod.tfvars", content: 'environment = "prd"' },
+  ];
+  for (const [profile, deployed] of [["editor", false], ["prod", true]] as const) {
+    const conditional = mapToProject(parseHclFiles(conditionalFiles, `${profile}.tfvars`));
+    assert.equal(conditional.resources.length, deployed ? 3 : 2, "only active count instances should map");
+    assert.equal(conditional.skipped.length, 2, "unknown and larger counts must remain explicit skips");
+    const group = conditional.resources.find((resource) => resource.tfName === (deployed ? "created" : "existing"));
+    assert.ok(group);
+    assert.equal(group.useExisting, !deployed);
+    const app = conditional.resources.find((resource) => resource.tfName === "app");
+    assert.ok(app);
+    assert.deepEqual(app.values.resource_group_name, { resourceId: group.id, attr: "name" });
+    assert.equal(app.values.zone_redundancy_enabled, deployed);
+    assert.equal(app.values.infrastructure_resource_group_name, deployed ? "rg-backend-managed" : "rg-existing-managed");
+    assert.equal(JSON.stringify(conditional.resources).includes("__expr"), false);
+  }
+
+  const stableResources = (resources: ResourceInstance[]) => {
+    const identities = new Map(resources.map((resource) => [resource.id, `${resource.type}.${resource.tfName}`]));
+    return resources.map((resource) => JSON.parse(JSON.stringify({ ...resource, id: identities.get(resource.id) }, (key, value) =>
+      key === "resourceId" ? identities.get(value) : value
+    ))).sort((left, right) => left.id.localeCompare(right.id));
+  };
+  for (const wrapper of ["", "archive/terraform/"]) {
+    for (const reverse of [false, true]) {
+      const archive = new JSZip();
+      for (const file of reverse ? [...conditionalFiles].reverse() : conditionalFiles) archive.file(`${wrapper}${file.name}`, file.content);
+      const bytes = await archive.generateAsync({ type: "uint8array" });
+      const upload = await readImportUpload([{ name: "conditional.zip", arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) } as File]);
+      assert.equal(upload.rootProfiles.length, 2);
+      for (const profile of ["editor", "prod"]) {
+        const session = importFromUpload(upload, `${wrapper}${profile}.tfvars`);
+        assert.deepEqual(stableResources(session.resources), stableResources(mapToProject(parseHclFiles(conditionalFiles, `${profile}.tfvars`)).resources));
+        assert.equal(findInvalidImportReferences(session.resources).length, 0);
+      }
+    }
+  }
+
+  const interpolatedName = 'ca-${replace(domain_key, "_", "-")}-example-${var.environment}';
+  const countBoundaries = mapToProject(parseHclFiles([{ name: "main.tf", content: `
+locals {
+  cycle = local.cycle
+  chosen = coalesce(null, "", "rg-chosen")
+}
+resource "azurerm_resource_group" "present" { count = (2 >= 1 && true) ? 1 : 0 name = local.chosen location = "westeurope" }
+resource "azurerm_resource_group" "absent" { count = false ? 1 : 0 }
+resource "azurerm_resource_group" "uncounted" { name = "plain" location = "westeurope" }
+resource "azurerm_resource_group" "unknown" { count = var.unknown ? 1 : 0 }
+resource "azurerm_resource_group" "unknown_boolean" { count = false && var.unknown ? 1 : 0 }
+resource "azurerm_resource_group" "cyclic" { count = local.cycle ? 1 : 0 }
+resource "azurerm_resource_group" "string_count" { count = "1" }
+resource "azurerm_resource_group" "fraction" { count = 0.5 }
+resource "azurerm_resource_group" "negative" { count = -1 }
+resource "azurerm_resource_group" "many" { count = 2 }
+resource "azurerm_resource_group" "function" { count = length([]) }
+resource "azurerm_resource_group" "invalid_token" { count = true @ ? 1 : 0 }
+resource "azurerm_virtual_network" "valid" { resource_group_name = azurerm_resource_group.present[0].name }
+resource "azurerm_virtual_network" "zero" { resource_group_name = azurerm_resource_group.absent[0].name }
+resource "azurerm_virtual_network" "wrong_index" { resource_group_name = azurerm_resource_group.present[1].name }
+resource "azurerm_virtual_network" "missing_index" { resource_group_name = azurerm_resource_group.present.name }
+resource "azurerm_virtual_network" "spurious_index" { resource_group_name = azurerm_resource_group.uncounted[0].name }
+` }]));
+  assert.equal(countBoundaries.skipped.length, 9);
+  const chosenGroup = countBoundaries.resources.find((resource) => resource.tfName === "present");
+  assert.equal(chosenGroup?.values.name, "rg-chosen");
+  assert.deepEqual(countBoundaries.resources.find((resource) => resource.tfName === "valid")?.values.resource_group_name, { resourceId: chosenGroup?.id, attr: "name" });
+  for (const name of ["zero", "wrong_index", "missing_index", "spurious_index"]) {
+    assert.equal(countBoundaries.resources.find((resource) => resource.tfName === name)?.values.resource_group_name, undefined);
+    assert.ok(countBoundaries.mapped.find((item) => item.name === name)?.unmappedFieldNames.includes("resource_group_name"));
+  }
+
+  const nestedCountFiles = [
+    { name: "main.tf", content: `
+module "outer" { source = "./outer" count = null == null ? 1 : 0 suffix = "managed" }
+resource "azurerm_container_app_environment" "app" {
+  resource_group_name = module.outer[0].name
+  infrastructure_resource_group_name = "\${module.outer[0].name}-managed"
+}
+module "disabled" { source = "./outer" count = 0 }
+resource "azurerm_virtual_network" "absent_module" { resource_group_name = module.disabled[0].name }
+` },
+    { name: "outer/main.tf", content: `
+variable "suffix" {}
+module "child" { source = "../child" count = 1 }
+resource "azurerm_virtual_network" "network" { resource_group_name = module.child[0].name }
+resource "azurerm_container_app_environment" "nested_app" {
+  resource_group_name = module.child[0].name
+  infrastructure_resource_group_name = true ? "\${module.child[0].name}-\${var.suffix}" : "unused"
+}
+output "name" { value = module.child[0].name }
+` },
+    { name: "child/main.tf", content: `
+resource "azurerm_resource_group" "main" { count = 1 name = "rg-nested" location = "westeurope" }
+output "name" { value = azurerm_resource_group.main[0].name }
+` },
+  ];
+  const nestedCount = mapToProject(parseHclFiles(nestedCountFiles));
+  assert.equal(nestedCount.resources.length, 4);
+  assert.equal(nestedCount.skipped.length, 1, "the disabled module output must not bind");
+  const nestedGroup = nestedCount.resources.find((resource) => resource.type === "azurerm_resource_group");
+  for (const resource of nestedCount.resources.filter((resource) => resource.type !== "azurerm_resource_group")) {
+    assert.deepEqual(resource.values.resource_group_name, { resourceId: nestedGroup?.id, attr: "name" });
+  }
+  assert.equal(nestedCount.resources.find((resource) => resource.tfName === "app")?.values.infrastructure_resource_group_name, "rg-nested-managed");
+  assert.equal(nestedCount.resources.find((resource) => resource.tfName === "outer__nested_app")?.values.infrastructure_resource_group_name, "rg-nested-managed");
+
+  const parentAlias = mapToProject(parseHclFiles([
+    { name: "main.tf", content: `
+resource "azurerm_resource_group" "main" { count = 1 name = "rg-parent" location = "westeurope" }
+module "child" { source = "./child" parent = azurerm_resource_group.main[0].name }
+` },
+    { name: "child/main.tf", content: `
+variable "parent" {}
+locals { alias = var.parent }
+resource "azurerm_resource_group" "main" { count = 1 name = "rg-child" location = "westeurope" }
+resource "azurerm_virtual_network" "network" { resource_group_name = local.alias }
+` },
+  ]));
+  assert.deepEqual(parentAlias.resources.find((resource) => resource.type === "azurerm_virtual_network")?.values.resource_group_name, {
+    resourceId: parentAlias.resources.find((resource) => resource.tfName === "main")?.id,
+    attr: "name",
+  }, "parent arguments must not bind to a same-named module resource");
+
+  const lookupSummary = mapToProject(parseHclFiles([{ name: "main.tf", content: `
+data "azurerm_client_config" "current" {}
+resource "azapi_update_resource" "settings" {}
+resource "azurerm_container_app_environment" "unresolved" {
+  name = "example"
+  zone_redundancy_enabled = var.missing == "prd"
+}
+` }]));
+  assert.equal(getImportSkipDiagnostic(lookupSummary.skipped[0]).reasonCode, "configuration_lookup");
+  assert.equal(getImportSkipDiagnostic(lookupSummary.skipped[1]).title, "Azure AzAPI provider is not supported");
+  assert.equal(lookupSummary.resources[0].values.zone_redundancy_enabled, undefined, "unresolved explicit values must not fall back to catalogue defaults");
+
+  const interpolationTokens = tokenize(`"${interpolatedName}"\nlocation = "westeurope"`);
+  assert.deepEqual(
+    interpolationTokens.map(({ type, value }) => [type, value]),
+    [
+      ["STRING", interpolatedName],
+      ["IDENT", "location"],
+      ["EQUALS", "="],
+      ["STRING", "westeurope"],
+      ["EOF", ""],
+    ],
+    "quoted function arguments inside interpolation must not terminate the template"
+  );
+  assert.equal(interpolationTokens[1].line, 2);
+  assert.equal(interpolationTokens[1].col, 1);
+
+  for (const template of [
+    '${jsonencode({ label = "}", nested = { value = "{" } })}',
+    '${join("-", ["${replace("a_b", "_", "-")}", "tail"])}',
+    '${replace("a\\\"b", "\\\"", "-")}',
+    '${replace("a\\\\b", "\\\\", "-")}',
+    '${var.name /* " } { */}',
+    '${var.name # " }\n}',
+    '${var.name // " }\n}',
+    '%{ if var.name == "example" }yes%{ endif }',
+    '$${literal} %%{literal}',
+    '${"$${literal}"}',
+  ]) {
+    assert.deepEqual(
+      tokenize(`"${template}" next = true`).map(({ type, value }) => [type, value]),
+      [["STRING", template], ["IDENT", "next"], ["EQUALS", "="], ["BOOL", "true"], ["EOF", ""]],
+      "nested template syntax must preserve the following assignment"
+    );
+  }
+  assert.equal(tokenize('"line\\n\\t\\\"quoted\\\"\\\\end"')[0].value, 'line\n\t"quoted"\\end');
+  assert.deepEqual(
+    tokenize('"${replace("x", "_", "-")').map(({ type, value }) => [type, value]),
+    [["STRING", '${replace("x", "_", "-")'], ["EOF", ""]],
+    "an unfinished interpolation must terminate at EOF"
+  );
+
+  const interpolationFiles = [{
+    name: "main.tf",
+    content: `
+locals {
+  container_app_name = "${interpolatedName}"
+  location = "westeurope"
+}
+resource "azurerm_resource_group" "after_template" {
+  name = "rg-example"
+  location = local.location
+}
+resource "azurerm_container_app" "template" {
+  name = "${interpolatedName}"
+  resource_group_name = "rg-example"
+}
+`,
+  }];
+  const interpolationParsed = parseHclFiles(interpolationFiles);
+  assert.deepEqual(interpolationParsed.blocks.find((block) => block.name === "template")?.body.attrs, {
+    name: { __expr: interpolatedName, __template: true },
+    resource_group_name: "rg-example",
+  });
+  assert.deepEqual(interpolationParsed.warnings, [
+    'main.tf: Configuration ignored: local "container_app_name" is not a static scalar alias',
+  ]);
+  assert.equal(mapToProject(interpolationParsed).resources.find((resource) => resource.tfName === "after_template")?.values.location, "westeurope");
+
+  const interpolationZip = new JSZip();
+  for (const file of interpolationFiles) interpolationZip.file(file.name, file.content);
+  const interpolationZipContents = await interpolationZip.generateAsync({ type: "uint8array" });
+  const interpolationUpload = await readImportUpload([{
+    name: "interpolation.zip",
+    arrayBuffer: async () => interpolationZipContents.buffer.slice(
+      interpolationZipContents.byteOffset,
+      interpolationZipContents.byteOffset + interpolationZipContents.byteLength
+    ),
+  } as File]);
+  const interpolationSession = importFromUpload(interpolationUpload);
+  assert.deepEqual(interpolationSession.parse, interpolationParsed);
+  const importedTemplate = interpolationSession.resources.find((resource) => resource.tfName === "template");
+  assert.ok(importedTemplate);
+  assert.equal(importedTemplate.values.name, undefined, "complex templates must not become literal domain names");
+  assert.ok(interpolationSession.mapped.find((item) => item.name === "template")?.unmappedFieldNames.includes("name"));
+  assert.equal(importedTemplate.values.resource_group_name, "rg-example");
+
   const parsed = parseHclFiles([
     {
       name: "container-app.tf",
@@ -223,8 +478,8 @@ resource "azurerm_resource_group" "this" {
   ]));
   assert.equal(
     forEachModuleSummary.resources.length,
-    1,
-    "a local for_each module should produce one template resource"
+    2,
+    "for_each produces one template and count=1 produces one instance"
   );
   const templateResource = forEachModuleSummary.resources[0];
   const mappedTemplate = forEachModuleSummary.mapped[0];
@@ -233,7 +488,7 @@ resource "azurerm_resource_group" "this" {
   assert.equal(templateResource.values.name, undefined, "each.value names should remain unmapped");
   assert.deepEqual(mappedTemplate.unmappedFieldNames, ["name"]);
   assert.deepEqual(mappedTemplate.unsupportedConstructs, [templateNote]);
-  assert.deepEqual(forEachModuleSummary.skipped.map((item) => item.name), ["counted"]);
+  assert.deepEqual(forEachModuleSummary.skipped, []);
 
   const moduleSession = importFromUpload({
     files: [
@@ -637,8 +892,8 @@ resource "azurerm_application_insights" "this" {
     scalarAliases.mapped
       .filter((item) => ["cyclic", "conditional", "function"].includes(item.name))
       .map((item) => item.unmappedFieldNames),
-    [["name"], ["name"], ["name"]],
-    "cycles, conditionals, and function calls must remain explicit partial mappings"
+    [["name"], [], ["name"]],
+    "static conditionals resolve while cycles and unsupported functions remain partial mappings"
   );
   assert.ok(
     scalarAliases.warnings.some((warning) => warning.includes('complex expression for "name"')),

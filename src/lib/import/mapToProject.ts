@@ -496,6 +496,18 @@ export function mapToProject(
 
     const label = `${block.kind} "${block.type}" "${block.name}"`;
 
+    if (block.kind === "data" && block.type === "azurerm_client_config") {
+      skipped.push({
+        kind: block.kind,
+        type: block.type,
+        name: block.name,
+        reason: "Client configuration lookup is not a deployable resource",
+        sourceIndex: block.sourceIndex,
+        sourceHint: block.sourceHint,
+      });
+      continue;
+    }
+
     if (!block.type.startsWith("azurerm_")) {
       skipped.push({
         kind: block.kind,
@@ -529,7 +541,7 @@ export function mapToProject(
         name: block.name,
         reason: block.body.meta.hasForEach
           ? "for_each is not supported"
-          : "count is not supported",
+          : "count must resolve to 0 or 1; unknown or larger counts are not supported",
         sourceIndex: block.sourceIndex,
         sourceHint: block.sourceHint,
       });
@@ -611,6 +623,7 @@ export function mapToProject(
         continue;
       }
       if (isExpr(raw)) {
+        delete values[field.key];
         warnings.push(
           `${label}: complex expression for "${key}" (${raw.__expr}) — left empty`
         );
@@ -620,6 +633,7 @@ export function mapToProject(
       }
       const coerced = coerceForField(field, raw);
       if (coerced === undefined) {
+        delete values[field.key];
         unmappedArgCount++;
         unmappedFieldNames.add(key);
         warnings.push(`${label}: could not map "${key}" to field ${field.key}`);
@@ -739,11 +753,11 @@ export function mapToProject(
   // Index references by upload root so independent uploads cannot cross-bind.
   const byAddr = new Map<string, ResourceInstance>();
   for (const p of pending) {
-    const key = `${p.instance.useExisting ? "data." : ""}${p.instance.type}.${p.instance.tfName}`;
+    const key = `${p.instance.useExisting ? "data." : ""}${p.instance.type}.${p.instance.tfName}${p.block.countInstance ? "[0]" : ""}`;
     byAddr.set(`${p.block.sourceRoot ?? ""}\u0000${key}`, p.instance);
     // Also allow lookup by original block name if renamed
     if (p.block.name !== p.instance.tfName) {
-      const orig = `${p.instance.useExisting ? "data." : ""}${p.instance.type}.${p.block.name}`;
+      const orig = `${p.instance.useExisting ? "data." : ""}${p.instance.type}.${p.block.name}${p.block.countInstance ? "[0]" : ""}`;
       const rootedOriginal = `${p.block.sourceRoot ?? ""}\u0000${orig}`;
       if (!byAddr.has(rootedOriginal)) byAddr.set(rootedOriginal, p.instance);
     }

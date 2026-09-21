@@ -121,7 +121,9 @@ History (~40 snapshots) covers resources, selection, environments/scopes, and **
 ## Known edge limits
 
 - One shared module tree; per-env differences via tfvars knobs, not duplicated env module trees.
-- Import skips modules, `for_each`/`count`, unknown providers, unsupported types, complex expressions.
+- Import expands uploaded local modules and imports one review template for `for_each`. A bounded adapter-only resolver uses the selected root profile, module arguments/defaults, and locals for static comparisons, booleans, conditionals, scalar `coalesce`, and templates. It never executes HCL or uses `eval`.
+- Resource, data, and local-module counts support only resolved 0/1. Zero removes the block; one retains transient counted-instance identity so only `[0]` can bind. Unknown or larger counts are skipped explicitly. Root isolation, module aliases, Existing/Create, scope validation, and ownership remain domain boundaries; parser metadata never enters `ResourceInstance`.
+- Module-output interpolation resolves only known scalar values, with cycle guards and scoped references. Remote, missing, or dynamic module sources, unsupported providers/types, general functions, and dynamic blocks remain unsupported. Partial mapping exposes unresolved fields and constructs; unresolved explicit fields do not inherit catalogue defaults. Client configuration lookups and unsupported Azure AzAPI operations have separate diagnostic labels. Import is not a complete Terraform evaluator or round-trip guarantee.
 - PE catalogue: ACR / Key Vault / SQL only; Container App is single-container.
 
 ## Related

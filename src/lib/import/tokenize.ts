@@ -125,20 +125,47 @@ export function tokenize(input: string): Token[] {
     if (ch === '"') {
       advance();
       let value = "";
-      while (i < input.length && peek() !== '"') {
-        if (peek() === "\\" && i + 1 < input.length) {
-          advance();
-          const esc = advance();
-          if (esc === "n") value += "\n";
-          else if (esc === "t") value += "\t";
-          else if (esc === '"') value += '"';
-          else if (esc === "\\") value += "\\";
-          else value += esc;
+      const contexts: Array<{ kind: "string" } | { kind: "expression"; depth: number }> = [
+        { kind: "string" },
+      ];
+      while (i < input.length && contexts.length > 0) {
+        const context = contexts[contexts.length - 1];
+        if (context.kind === "string") {
+          if (peek() === '"') {
+            contexts.pop();
+            const quote = advance();
+            if (contexts.length > 0) value += quote;
+          } else if (peek() === "\\" && i + 1 < input.length) {
+            const slash = advance();
+            const esc = advance();
+            if (contexts.length > 1) value += slash + esc;
+            else if (esc === "n") value += "\n";
+            else if (esc === "t") value += "\t";
+            else if (esc === '"') value += '"';
+            else if (esc === "\\") value += "\\";
+            else value += esc;
+          } else if ((peek() === "$" || peek() === "%") && peek(1) === peek() && peek(2) === "{") {
+            value += advance() + advance() + advance();
+          } else if ((peek() === "$" || peek() === "%") && peek(1) === "{") {
+            value += advance() + advance();
+            contexts.push({ kind: "expression", depth: 1 });
+          } else {
+            value += advance();
+          }
+        } else if (peek() === "#" || (peek() === "/" && peek(1) === "/")) {
+          while (i < input.length && peek() !== "\n") value += advance();
+        } else if (peek() === "/" && peek(1) === "*") {
+          value += advance() + advance();
+          while (i < input.length && !(peek() === "*" && peek(1) === "/")) value += advance();
+          if (peek() === "*") value += advance() + advance();
         } else {
-          value += advance();
+          const expressionChar = advance();
+          value += expressionChar;
+          if (expressionChar === '"') contexts.push({ kind: "string" });
+          else if (expressionChar === "{") context.depth++;
+          else if (expressionChar === "}" && --context.depth === 0) contexts.pop();
         }
       }
-      if (peek() === '"') advance();
       push("STRING", value, startLine, startCol);
       continue;
     }
@@ -200,8 +227,7 @@ export function tokenize(input: string): Token[] {
       continue;
     }
 
-    // Skip unknown characters.
-    advance();
+    push("OPERATOR", advance(), startLine, startCol);
   }
 
   push("EOF", "", line, col);
