@@ -726,6 +726,48 @@ import { to = module.example[0].azurerm_resource_group.main id = "ignored" }`,
     assert.equal(profileSummary.warnings.some((warning) => warning.includes("Unsupported value")), false);
   }
 
+  const selectedProfileTemplates = mapToProject(parseHclFiles([
+    {
+      name: "main.tf",
+      content: `
+variable "location" { default = "northeurope" }
+variable "name_suffix" { default = "default" }
+locals { group_suffix = var.name_suffix }
+resource "azurerm_resource_group" "templated" {
+  name = "rg-\${local.group_suffix}"
+  location = "\${var.location}"
+}
+resource "azurerm_resource_group" "dynamic_template" {
+  name = "rg-\${lower(var.name_suffix)}"
+  location = "westeurope"
+}
+`,
+    },
+    {
+      name: "prod.tfvars",
+      content: `location = "westeurope"\nname_suffix = "prod"`,
+    },
+  ], "prod.tfvars"));
+  const templatedGroup = selectedProfileTemplates.resources.find(
+    (resource) => resource.tfName === "templated"
+  );
+  assert.ok(templatedGroup);
+  assert.equal(templatedGroup.values.name, "rg-prod");
+  assert.equal(templatedGroup.values.location, "westeurope");
+  assert.deepEqual(
+    selectedProfileTemplates.mapped.find((item) => item.name === "dynamic_template")
+      ?.unmappedFieldNames,
+    ["name"],
+    "templates with function calls must remain explicit partial mappings"
+  );
+  assert.equal(
+    Object.values(templatedGroup.values).some(
+      (value) => typeof value === "object" && value !== null && ("__expr" in value || "__ref" in value)
+    ),
+    false,
+    "resolved profile templates must not put parser artifacts in ResourceInstance values"
+  );
+
   const configurationRecovery = parseHclFiles([
     {
       name: "config/locals.tf",

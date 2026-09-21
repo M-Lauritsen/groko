@@ -768,6 +768,9 @@ function createStaticValueResolver(
       return value;
     }
     if (!isExpressionValue(value)) return undefined;
+    if (value.__expr.includes("${")) {
+      return resolveStaticTemplate(value.__expr, resolve);
+    }
     const match = /^(var|local)\.([A-Za-z_][\w-]*)$/.exec(value.__expr);
     if (!match) return undefined;
     const key = `${match[1]}.${match[2]}`;
@@ -781,6 +784,26 @@ function createStaticValueResolver(
   }
 
   return { resolve };
+}
+
+function resolveStaticTemplate(
+  template: string,
+  resolve: (value: HclValue) => StaticScalar | undefined
+): string | undefined {
+  const matches = [...template.matchAll(/\$\{([^{}]+)\}/g)];
+  if (matches.length === 0) return undefined;
+  let cursor = 0;
+  let output = "";
+  for (const match of matches) {
+    if (match.index === undefined) return undefined;
+    const expression = match[1];
+    if (!/^(var|local)\.[A-Za-z_][\w-]*$/.test(expression)) return undefined;
+    const value = resolve({ __expr: expression });
+    if (value === undefined || value === null) return undefined;
+    output += template.slice(cursor, match.index) + String(value);
+    cursor = match.index + match[0].length;
+  }
+  return output + template.slice(cursor);
 }
 
 function expandModule(
