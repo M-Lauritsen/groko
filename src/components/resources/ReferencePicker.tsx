@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import type {
   Environment,
   FieldDef,
@@ -36,6 +37,7 @@ export function ReferencePicker({
   onChange,
   onSelectResource,
 }: Props) {
+  const selectId = useId();
   const refTypes = field.refTypes ?? [];
   const attr = field.refAttr ?? "id";
   const currentResource = resources.find((r) => r.id === currentId);
@@ -63,7 +65,7 @@ export function ReferencePicker({
 
   return (
     <div>
-      <Label required={field.required}>{field.label}</Label>
+      <Label htmlFor={selectId} required={field.required}>{field.label}</Label>
       {candidates.length === 0 ? (
         <div className="rounded-lg border border-dashed border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200">
           No compatible resources in this environment. Add a{" "}
@@ -77,6 +79,7 @@ export function ReferencePicker({
         </div>
       ) : (
         <SelectInput
+          id={selectId}
           value={current?.resourceId ?? ""}
           onChange={(e) => {
             const id = e.target.value;

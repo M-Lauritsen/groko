@@ -30,6 +30,9 @@ import { getResourceType } from "../schema/resources";
 import {
   defaultEnvironments,
   defaultScopeForNewResource,
+  findScopeCompatibleResource,
+  mapResourceReferences,
+  withScopeAndValidReferences,
 } from "../schema/environments";
 import { mergeImportedResources } from "../import/mapToProject";
 import {
@@ -296,6 +299,10 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       const id = uid();
 
       commit((s) => {
+        const scope = defaultScopeForNewResource(type, s.activeEnvironmentId);
+        const newResource = { scope } as ResourceInstance;
+        const findCompatibleResource = (resourceType: string) =>
+          findScopeCompatibleResource(newResource, s.resources, resourceType);
         const existingNames = new Set(
           s.resources.filter((r) => r.type === type).map((r) => r.tfName)
         );
@@ -351,27 +358,21 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (type === "azurerm_container_app") {
-          const env = s.resources.find(
-            (r) => r.type === "azurerm_container_app_environment"
-          );
+          const env = findCompatibleResource("azurerm_container_app_environment");
           if (env) {
             values.container_app_environment_id = {
               resourceId: env.id,
               attr: "id",
             };
           }
-          const acr = s.resources.find(
-            (r) => r.type === "azurerm_container_registry"
-          );
+          const acr = findCompatibleResource("azurerm_container_registry");
           if (acr) {
             values.container_registry_id = {
               resourceId: acr.id,
               attr: "id",
             };
           }
-          const uai = s.resources.find(
-            (r) => r.type === "azurerm_user_assigned_identity"
-          );
+          const uai = findCompatibleResource("azurerm_user_assigned_identity");
           if (uai) {
             values.user_assigned_identity_id = {
               resourceId: uai.id,
@@ -382,12 +383,8 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           }
         }
         if (type === "azurerm_role_assignment") {
-          const acr = s.resources.find(
-            (r) => r.type === "azurerm_container_registry"
-          );
-          const uai = s.resources.find(
-            (r) => r.type === "azurerm_user_assigned_identity"
-          );
+          const acr = findCompatibleResource("azurerm_container_registry");
+          const uai = findCompatibleResource("azurerm_user_assigned_identity");
           if (acr) {
             values.scope = { resourceId: acr.id, attr: "id" };
           }
@@ -403,7 +400,8 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           const caeSubnet = s.resources.find(
             (r) =>
               r.type === "azurerm_subnet" &&
-              r.values.delegation === "Microsoft.App/environments"
+              r.values.delegation === "Microsoft.App/environments" &&
+              findScopeCompatibleResource(newResource, [r], r.type) === r
           );
           if (caeSubnet) {
             values.infrastructure_subnet_id = {
@@ -411,9 +409,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
               attr: "id",
             };
           }
-          const law = s.resources.find(
-            (r) => r.type === "azurerm_log_analytics_workspace"
-          );
+          const law = findCompatibleResource("azurerm_log_analytics_workspace");
           if (law) {
             values.log_analytics_workspace_id = {
               resourceId: law.id,
@@ -423,9 +419,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (type === "azurerm_application_insights") {
-          const law = s.resources.find(
-            (r) => r.type === "azurerm_log_analytics_workspace"
-          );
+          const law = findCompatibleResource("azurerm_log_analytics_workspace");
           if (law) {
             values.workspace_id = {
               resourceId: law.id,
@@ -438,7 +432,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           values.location = s.config.location;
         }
 
-        const rg = s.resources.find((r) => r.type === "azurerm_resource_group");
+        const rg = findCompatibleResource("azurerm_resource_group");
         if (rg) {
           for (const f of def.fields) {
             if (
@@ -476,7 +470,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
             useExisting,
             values,
             existingValues,
-            scope: defaultScopeForNewResource(type, s.activeEnvironmentId),
+            scope,
           },
           s.activeEnvironmentId
         );
@@ -540,9 +534,12 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     (id: string, scope: ResourceScope) => {
       commit((s) => ({
         ...s,
-        resources: s.resources.map((r) =>
-          r.id === id ? { ...r, scope } : r
-        ),
+        resources: (() => {
+          const resource = s.resources.find((candidate) => candidate.id === id);
+          return resource
+            ? withScopeAndValidReferences(resource, scope, s.resources)
+            : s.resources;
+        })(),
       }));
     },
     [commit]
@@ -565,20 +562,11 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       commit((s) => {
         const resources = s.resources
           .filter((r) => r.id !== id)
-          .map((r) => {
-            const values = { ...r.values };
-            for (const [k, v] of Object.entries(values)) {
-              if (
-                typeof v === "object" &&
-                v !== null &&
-                "resourceId" in v &&
-                (v as { resourceId: string }).resourceId === id
-              ) {
-                delete values[k];
-              }
-            }
-            return { ...r, values };
-          });
+          .map((resource) =>
+            mapResourceReferences(resource, (reference) =>
+              reference.resourceId === id ? undefined : reference
+            )
+          );
         return {
           ...s,
           resources,

@@ -3,6 +3,7 @@
 import type { ContainerEnvVar, ContainerAppSecret, ReferenceValue, ResourceInstance } from "@/lib/schema/types";
 import { isReferenceValue } from "@/lib/schema/types";
 import { getResourceType } from "@/lib/schema/resources";
+import { canReference } from "@/lib/schema/environments";
 import {
   Label,
   Hint,
@@ -141,8 +142,12 @@ export function AppSecretsEditor({
   currentId: string;
 }) {
   const rows = asSecretList(value);
+  const current = resources.find((resource) => resource.id === currentId);
   const vaults = resources.filter(
-    (r) => r.id !== currentId && r.type === "azurerm_key_vault"
+    (resource) =>
+      resource.id !== currentId &&
+      resource.type === "azurerm_key_vault" &&
+      (current ? canReference(current, resource) : false)
   );
 
   function update(i: number, patch: Partial<ContainerAppSecret>) {

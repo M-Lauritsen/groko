@@ -26,6 +26,7 @@ export const RESOURCE_TYPE_ORDER = [
   "azurerm_public_ip",
   "azurerm_network_interface",
   "azurerm_storage_account",
+  "azurerm_storage_container",
   "azurerm_key_vault",
   "azurerm_service_plan",
   "azurerm_log_analytics_workspace",
@@ -74,6 +75,7 @@ export const RESOURCE_BUILD_STAGES: readonly ResourceBuildStage[] = [
     label: "Storage, security & platform prerequisites",
     types: [
       "azurerm_storage_account",
+      "azurerm_storage_container",
       "azurerm_key_vault",
       "azurerm_service_plan",
       "azurerm_log_analytics_workspace",
@@ -161,7 +163,7 @@ export const MODULE_DEFS: ModuleDef[] = [
   {
     id: "storage",
     label: "Storage",
-    types: ["azurerm_storage_account"],
+    types: ["azurerm_storage_account", "azurerm_storage_container"],
   },
   {
     id: "security",

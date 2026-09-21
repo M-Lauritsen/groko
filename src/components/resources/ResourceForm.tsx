@@ -2,13 +2,24 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { useProject } from "@/lib/store/project-context";
-import { getResourceType } from "@/lib/schema/resources";
+import {
+  getResourceType,
+  isPrivateEndpointTargetCompatible,
+  isRoleAssignmentScopeCompatible,
+  PRIVATE_ENDPOINT_TARGET_TYPE_BY_SUBRESOURCE,
+  privateEndpointSubresourceForTargetType,
+  roleAssignmentScopeTypesForRole,
+} from "@/lib/schema/resources";
 import {
   getDependencies,
   getUsedBy,
   formatResourceLabel,
 } from "@/lib/generate/deps";
-import type { FieldDef, ReferenceValue } from "@/lib/schema/types";
+import {
+  type FieldDef,
+  type ReferenceValue,
+  isReferenceValue,
+} from "@/lib/schema/types";
 import {
   envScope,
   environmentById,
@@ -51,6 +62,7 @@ export function ResourceForm() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [reassignTargetId, setReassignTargetId] = useState<string | null>(null);
+  const [compatibilityNote, setCompatibilityNote] = useState<string | null>(null);
 
   const resource = state.resources.find(
     (r) => r.id === state.selectedResourceId
@@ -103,6 +115,61 @@ export function ResourceForm() {
     }
   }
 
+  function referenceType(value: ReferenceValue | undefined): string | undefined {
+    return value
+      ? state.resources.find((candidate) => candidate.id === value.resourceId)?.type
+      : undefined;
+  }
+
+  function changeReference(field: FieldDef, value: ReferenceValue | undefined) {
+    const previousValue = resource!.values[field.key];
+    const previous = isReferenceValue(previousValue)
+      ? (previousValue as ReferenceValue)
+      : undefined;
+    const previousType = referenceType(previous);
+    const nextType = referenceType(value);
+
+    updateResourceValue(resource!.id, field.key, value);
+    setCompatibilityNote(null);
+
+    if (previousType === nextType || !nextType) return;
+
+    if (
+      resource!.type === "azurerm_private_endpoint" &&
+      field.key === "private_connection_resource_id" &&
+      !isPrivateEndpointTargetCompatible(
+        resource!.values.subresource_names,
+        nextType
+      )
+    ) {
+      const subresource = privateEndpointSubresourceForTargetType(nextType);
+      if (subresource) {
+        updateResourceValue(resource!.id, "subresource_names", subresource);
+        setCompatibilityNote("Target type updated to match the selected resource.");
+      }
+    }
+
+    if (
+      resource!.type === "azurerm_role_assignment" &&
+      field.key === "scope" &&
+      !isRoleAssignmentScopeCompatible(
+        resource!.values.role_definition_name,
+        nextType
+      )
+    ) {
+      const roleField = getResourceType(resource!.type)?.fields.find(
+        (candidate) => candidate.key === "role_definition_name"
+      );
+      const role = roleField?.options?.find((option) =>
+        isRoleAssignmentScopeCompatible(option.value, nextType)
+      )?.value;
+      if (role) {
+        updateResourceValue(resource!.id, "role_definition_name", role);
+        setCompatibilityNote("Role updated to match the selected scope.");
+      }
+    }
+  }
+
   function renderField(field: FieldDef) {
     if (resource!.useExisting && !field.existingKey) {
       return null;
@@ -138,20 +205,47 @@ export function ResourceForm() {
     }
 
     if (field.type === "reference") {
+      const privateEndpointSubresource = String(
+        resource!.values.subresource_names ?? ""
+      );
+      const privateEndpointTargetType =
+        PRIVATE_ENDPOINT_TARGET_TYPE_BY_SUBRESOURCE[
+          privateEndpointSubresource as keyof typeof PRIVATE_ENDPOINT_TARGET_TYPE_BY_SUBRESOURCE
+        ];
+      const compatibleReferenceField =
+        resource!.type === "azurerm_private_endpoint" &&
+        field.key === "private_connection_resource_id"
+          ? {
+              ...field,
+              refTypes: privateEndpointTargetType
+                ? [privateEndpointTargetType]
+                : field.refTypes,
+            }
+          : field;
       return (
-        <ReferencePicker
-          key={field.key}
-          field={field}
-          value={resource!.values[field.key]}
-          resources={state.resources}
-          currentId={resource!.id}
-          activeEnvironmentId={state.activeEnvironmentId}
-          environments={state.environments}
-          onChange={(v: ReferenceValue | undefined) =>
-            updateResourceValue(resource!.id, field.key, v)
-          }
-          onSelectResource={selectResource}
-        />
+        <div key={field.key}>
+          <ReferencePicker
+            field={compatibleReferenceField}
+            value={resource!.values[field.key]}
+            resources={state.resources}
+            currentId={resource!.id}
+            activeEnvironmentId={state.activeEnvironmentId}
+            environments={state.environments}
+            onChange={(v: ReferenceValue | undefined) =>
+              changeReference(field, v)
+            }
+            onSelectResource={selectResource}
+          />
+        {compatibilityNote &&
+          ((resource!.type === "azurerm_private_endpoint" &&
+            field.key === "private_connection_resource_id") ||
+            (resource!.type === "azurerm_role_assignment" &&
+              field.key === "scope")) && (
+            <p className="mt-1.5 text-xs text-sky-700 dark:text-sky-300" role="status">
+              {compatibilityNote}
+            </p>
+          )}
+        </div>
       );
     }
 
@@ -169,6 +263,36 @@ export function ResourceForm() {
     }
 
     if (field.type === "select") {
+      const targetReference = resource!.values.private_connection_resource_id;
+      const scopeReference = resource!.values.scope;
+      const targetType = isReferenceValue(targetReference)
+        ? state.resources.find(
+            (candidate) =>
+              candidate.id === targetReference.resourceId
+          )?.type
+        : undefined;
+      const scopeType = isReferenceValue(scopeReference)
+        ? state.resources.find(
+            (candidate) => candidate.id === scopeReference.resourceId
+          )?.type
+        : undefined;
+      const options = (field.options ?? []).filter((option) => {
+        if (
+          resource!.type === "azurerm_private_endpoint" &&
+          field.key === "subresource_names" &&
+          targetType
+        ) {
+          return option.value === privateEndpointSubresourceForTargetType(targetType);
+        }
+        if (
+          resource!.type === "azurerm_role_assignment" &&
+          field.key === "role_definition_name" &&
+          scopeType
+        ) {
+          return roleAssignmentScopeTypesForRole(option.value).includes(scopeType);
+        }
+        return true;
+      });
       return (
         <div key={field.key}>
           <Label htmlFor={field.key} required={field.required}>
@@ -212,7 +336,7 @@ export function ResourceForm() {
               }
             }}
           >
-            {(field.options ?? []).map((o) => (
+            {options.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>

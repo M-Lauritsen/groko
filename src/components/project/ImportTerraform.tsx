@@ -1,10 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { saveAs } from "file-saver";
 import { useProject } from "@/lib/store/project-context";
 import {
-  importFromFiles,
+  createImportDiagnosticReport,
+  IMPORT_DIAGNOSTIC_REPORT_FILE_NAME,
+  importFromUpload,
+  readImportUpload,
+  type ImportUpload,
   type ImportSummary,
+  type ParseResult,
+  type RootTfvarsProfile,
   type SkippedItem,
 } from "@/lib/import";
 import {
@@ -14,27 +22,32 @@ import {
   Badge,
   Hint,
 } from "@/components/ui/Field";
-import { SegmentedControl } from "@/components/ui/SegmentedControl";
-import { getResourceType } from "@/lib/schema/resources";
 import {
+  getResourceType,
+  isPrivateEndpointTargetCompatible,
+  isRoleAssignmentScopeCompatible,
+} from "@/lib/schema/resources";
+import {
+  canReference,
   envScope,
   normalizeScope,
   scopeLabel,
   sharedScope,
   tierShortLabel,
 } from "@/lib/schema/environments";
-import type { ResourceInstance, ResourceScope } from "@/lib/schema/types";
+import {
+  isReferenceValue,
+  type ResourceInstance,
+  type ResourceScope,
+} from "@/lib/schema/types";
 import { shouldGateDestructiveApplyOnProd } from "@/lib/store/prod-friction";
 import { ProdFrictionDialog } from "@/components/project/ProdFrictionDialog";
 
-type WizardStep = "upload" | "review" | "confirm";
+type WizardStep = "upload" | "profile" | "review" | "confirm";
 type ApplyMode = "merge" | "replace";
 
 function domainLabel(type: string): string {
-  return (
-    getResourceType(type)?.label ??
-    type.replace(/^azurerm_/, "").replace(/_/g, " ")
-  );
+  return getResourceType(type)?.label ?? "Unknown resource";
 }
 
 function resourceDisplayName(r: ResourceInstance): string {
@@ -45,50 +58,190 @@ function resourceDisplayName(r: ResourceInstance): string {
   return fromValues || r.tfName;
 }
 
-function plainSkipReason(s: SkippedItem): string {
+function hasLiteralValue(value: unknown): boolean {
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "number" || typeof value === "boolean") return true;
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== null && value !== undefined && !isReferenceValue(value);
+}
+
+function missingRequiredFields(
+  resource: ResourceInstance,
+  draft: ResourceInstance[]
+): string[] {
+  const def = getResourceType(resource.type);
+  if (!def) return ["Supported resource type"];
+
+  const fields = resource.useExisting
+    ? def.fields.filter((field) => field.existingKey)
+    : def.fields.filter((field) => field.required);
+
+  return fields
+    .filter((field) => {
+      const value = resource.useExisting
+        ? resource.existingValues[field.key] ?? resource.values[field.key]
+        : resource.values[field.key];
+      return isReferenceValue(value)
+        ? resource.useExisting || !draft.some((candidate) => candidate.id === value.resourceId)
+        : !hasLiteralValue(value);
+    })
+    .map((field) => field.label);
+}
+
+function invalidReferenceFields(
+  resource: ResourceInstance,
+  draft: ResourceInstance[]
+): string[] {
+  const def = getResourceType(resource.type);
+  if (!def) return [];
+
+  return def.fields
+    .filter((field) => field.type === "reference")
+    .filter((field) => {
+      const value = resource.values[field.key];
+      if (!isReferenceValue(value)) return false;
+      const target = draft.find((candidate) => candidate.id === value.resourceId);
+      return (
+        !target ||
+        !field.refTypes?.includes(target.type) ||
+        !getResourceType(target.type)?.outputs.includes(value.attr) ||
+        !canReference(resource, target)
+      );
+    })
+    .map((field) => field.label);
+}
+
+function invalidCompatibilityFields(
+  resource: ResourceInstance,
+  draft: ResourceInstance[]
+): string[] {
+  if (resource.type === "azurerm_private_endpoint") {
+    const target = resource.values.private_connection_resource_id;
+    const targetType = isReferenceValue(target)
+      ? draft.find((candidate) => candidate.id === target.resourceId)?.type
+      : undefined;
+    return targetType && !isPrivateEndpointTargetCompatible(
+      resource.values.subresource_names,
+      targetType
+    )
+      ? ["Target resource and Target type (subresource)"]
+      : [];
+  }
+
+  if (resource.type === "azurerm_role_assignment") {
+    const scope = resource.values.scope;
+    const scopeType = isReferenceValue(scope)
+      ? draft.find((candidate) => candidate.id === scope.resourceId)?.type
+      : undefined;
+    return scopeType && !isRoleAssignmentScopeCompatible(
+      resource.values.role_definition_name,
+      scopeType
+    )
+      ? ["Scope and Role"]
+      : [];
+  }
+
+  return [];
+}
+
+type SkippedGroup = {
+  title: string;
+  help?: string;
+  count: number;
+  items: SkippedItem[];
+};
+
+function plainSkipReason(s: SkippedItem): Pick<SkippedGroup, "title" | "help"> {
   const reason = s.reason;
+  if (/Unresolved module output/i.test(reason)) {
+    return {
+      title: "Unresolved module output",
+      help: "Add the dependent resource from the catalogue and connect it after import.",
+    };
+  }
+  if (s.kind === "module") {
+    if (/is remote/i.test(reason)) {
+      return {
+        title: "Remote module source",
+        help: "Upload a local copy of this module, then import the files together.",
+      };
+    }
+    if (/not found in the upload/i.test(reason)) {
+      return {
+        title: "Local module files missing",
+        help: "Include the local module files in the upload, then try again.",
+      };
+    }
+    if (/static local path/i.test(reason)) {
+      return {
+        title: "Dynamic module source",
+        help: "Use a fixed local module source or add its resources from the catalogue.",
+      };
+    }
+    if (/for_each|count/i.test(reason)) {
+      return {
+        title: "Module uses for_each or count",
+        help: "Add each needed resource from the catalogue after import.",
+      };
+    }
+    if (/module cycle/i.test(reason)) {
+      return {
+        title: "Module cycle",
+        help: "Break the module cycle, then upload the local modules again.",
+      };
+    }
+    return {
+      title: "Module could not be expanded",
+      help: "Add the module's resources from the catalogue after import.",
+    };
+  }
   if (
     reason.includes("RESOURCE_CATALOGUE") ||
     reason.includes("not in the catalogue") ||
     reason.includes("not in catalogue")
   ) {
-    return "Not in the builder catalogue yet";
+    return { title: "Not in the builder catalogue yet" };
   }
   if (/for_each/i.test(reason)) {
-    return "Uses for_each (not supported in the importer)";
+    return { title: "Uses for_each (not supported in the importer)" };
   }
   if (/\bcount\b/i.test(reason)) {
-    return "Uses count (not supported in the importer)";
-  }
-  if (/module/i.test(reason)) {
-    return "Module calls are not imported — add resources from the catalogue";
+    return { title: "Uses count (not supported in the importer)" };
   }
   if (/non-azurerm|non-azure|provider/i.test(reason)) {
-    return "Non-Azure provider — out of scope";
+    return { title: "Non-Azure provider — out of scope" };
   }
-  return reason;
+  return { title: "Could not map this item" };
 }
 
 function skippedTitle(s: SkippedItem): string {
-  if (s.kind === "module") return `Module “${s.name}”`;
-  return `${domainLabel(s.type)} (${s.name})`;
+  if (s.kind === "module") return "Module";
+  return domainLabel(s.type);
+}
+
+function skippedItemIdentity(s: SkippedItem): string {
+  return `${skippedTitle(s)}: ${s.name || "Unnamed source"}`;
 }
 
 function groupSkipped(
   skipped: SkippedItem[]
-): { title: string; count: number; items: SkippedItem[] }[] {
-  const map = new Map<string, SkippedItem[]>();
+): SkippedGroup[] {
+  const map = new Map<string, SkippedGroup>();
   for (const s of skipped) {
-    const key = plainSkipReason(s);
-    const list = map.get(key) ?? [];
-    list.push(s);
-    map.set(key, list);
+    const group = plainSkipReason(s);
+    const fallback =
+      group.title === "Could not map this item" ||
+      group.title === "Module could not be expanded";
+    const groupKey = fallback ? `${group.title}:${s.kind}:${s.type}:${s.name}` : group.title;
+    const current = map.get(groupKey);
+    if (current) {
+      current.items.push(s);
+      current.count++;
+    } else {
+      map.set(groupKey, { ...group, count: 1, items: [s] });
+    }
   }
-  return [...map.entries()].map(([title, items]) => ({
-    title,
-    count: items.length,
-    items,
-  }));
+  return [...map.values()];
 }
 
 export function ImportTerraform({
@@ -101,23 +254,35 @@ export function ImportTerraform({
   const { importResources, state } = useProject();
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const continueButtonRef = useRef<HTMLButtonElement>(null);
+  const confirmTitleRef = useRef<HTMLHeadingElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+  const stepRef = useRef<WizardStep>("upload");
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<WizardStep>("upload");
+  const [paneOpen, setPaneOpen] = useState(false);
   const [fileCount, setFileCount] = useState(0);
+  const [upload, setUpload] = useState<ImportUpload | null>(null);
+  const [rootProfiles, setRootProfiles] = useState<RootTfvarsProfile[]>([]);
+  const [selectedRootProfile, setSelectedRootProfile] = useState("");
   const [draft, setDraft] = useState<ResourceInstance[]>([]);
   const [skipped, setSkipped] = useState<SkippedItem[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [unmappedArgCount, setUnmappedArgCount] = useState(0);
   const [supportedCount, setSupportedCount] = useState(0);
+  const [diagnosticImport, setDiagnosticImport] = useState<
+    (ImportSummary & { fileCount: number; parse: ParseResult }) | null
+  >(null);
+  const [statusMessage, setStatusMessage] = useState("");
   /** Pending Replace/Merge awaiting Prod friction confirm. */
   const [prodPendingMode, setProdPendingMode] = useState<ApplyMode | null>(
     null
   );
 
-  const titleId = useId();
+  const paneTitleId = useId();
+  const confirmTitleId = useId();
   const environments = state.environments;
   const activeEnv = useMemo(
     () =>
@@ -132,11 +297,20 @@ export function ImportTerraform({
     setSkipped([]);
     setWarnings([]);
     setFileCount(0);
+    setUpload(null);
+    setRootProfiles([]);
+    setSelectedRootProfile("");
     setUnmappedArgCount(0);
     setSupportedCount(0);
+    setDiagnosticImport(null);
     setError(null);
     setProdPendingMode(null);
+    setStatusMessage("");
   }, []);
+
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
 
   const onPick = useCallback(() => {
     inputRef.current?.click();
@@ -144,6 +318,7 @@ export function ImportTerraform({
 
   const loadSummary = useCallback(
     (result: ImportSummary & { fileCount: number }) => {
+      setDiagnosticImport(result as ImportSummary & { fileCount: number; parse: ParseResult });
       // Domain draft only — never keep parse/raw HCL on instances.
       setDraft(
         result.resources.map((r) => ({
@@ -160,9 +335,13 @@ export function ImportTerraform({
       setSupportedCount(result.supportedCount);
       if (result.resources.length === 0 && result.skipped.length === 0) {
         setError(result.warnings[0] ?? "Nothing to import.");
+        setStatusMessage("Import failed. Nothing could be imported.");
         setStep("upload");
         return;
       }
+      setStatusMessage(
+        `Mapping complete: ${result.supportedCount} mapped, ${result.skipped.length} could not map, ${result.unmappedArgCount} partially mapped field${result.unmappedArgCount === 1 ? "" : "s"}.`
+      );
       setStep("review");
     },
     []
@@ -174,10 +353,24 @@ export function ImportTerraform({
       setBusy(true);
       setError(null);
       try {
-        const result = await importFromFiles(files);
-        loadSummary(result);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        const nextUpload = await readImportUpload(files);
+        if (nextUpload.files.length === 0) {
+          setError("No .tf / .tfvars files found in the upload.");
+          setStatusMessage("Import failed. Nothing could be imported.");
+          setStep("upload");
+          return;
+        }
+        setUpload(nextUpload);
+        setRootProfiles(nextUpload.rootProfiles);
+        if (nextUpload.rootProfiles.length > 1) {
+          setSelectedRootProfile("");
+          setStatusMessage("Choose one root variable profile before mapping resources.");
+          setStep("profile");
+        } else {
+          loadSummary(importFromUpload(nextUpload, nextUpload.rootProfiles[0]?.path));
+        }
+      } catch {
+        setError("We couldn't read that upload. Check the file type and try again.");
         setStep("upload");
       } finally {
         setBusy(false);
@@ -186,6 +379,19 @@ export function ImportTerraform({
     },
     [loadSummary]
   );
+
+  const mapSelectedProfile = useCallback(() => {
+    if (!upload || !selectedRootProfile) return;
+    setBusy(true);
+    try {
+      loadSummary(importFromUpload(upload, selectedRootProfile));
+    } catch {
+      setError("We couldn't map that profile. Choose another profile or upload again.");
+      setStep("profile");
+    } finally {
+      setBusy(false);
+    }
+  }, [loadSummary, selectedRootProfile, upload]);
 
   const updateDraft = useCallback((id: string, patch: Partial<ResourceInstance>) => {
     setDraft((rows) =>
@@ -207,10 +413,39 @@ export function ImportTerraform({
     [updateDraft]
   );
 
+  const removeDraftResource = useCallback((id: string) => {
+    setDraft((rows) => rows.filter((row) => row.id !== id));
+  }, []);
+
+  const draftValidation = useMemo(
+    () => new Map(draft.map((resource) => [resource.id, missingRequiredFields(resource, draft)])),
+    [draft]
+  );
+  const invalidReferenceValidation = useMemo(
+    () => new Map(draft.map((resource) => [resource.id, invalidReferenceFields(resource, draft)])),
+    [draft]
+  );
+  const invalidCompatibilityValidation = useMemo(
+    () => new Map(draft.map((resource) => [resource.id, invalidCompatibilityFields(resource, draft)])),
+    [draft]
+  );
+  const invalidDraftCount = draft.filter(
+    (resource) =>
+      (draftValidation.get(resource.id)?.length ?? 0) > 0 ||
+      (invalidReferenceValidation.get(resource.id)?.length ?? 0) > 0 ||
+      (invalidCompatibilityValidation.get(resource.id)?.length ?? 0) > 0
+  ).length;
+
   const goConfirm = useCallback(() => {
-    if (draft.length === 0) return;
+    if (draft.length === 0 || invalidDraftCount > 0) return;
     setStep("confirm");
-  }, [draft.length]);
+    requestAnimationFrame(() => confirmTitleRef.current?.focus());
+  }, [draft.length, invalidDraftCount]);
+
+  const returnToReview = useCallback(() => {
+    setStep("review");
+    requestAnimationFrame(() => continueButtonRef.current?.focus());
+  }, []);
 
   const commitImport = useCallback(
     (mode: ApplyMode) => {
@@ -218,6 +453,7 @@ export function ImportTerraform({
       // Commit domain ResourceInstances only (labels/scopes/existing/values).
       importResources(draft, mode);
       resetWizard();
+      setPaneOpen(false);
       onImported?.();
     },
     [draft, importResources, onImported, resetWizard]
@@ -239,19 +475,66 @@ export function ImportTerraform({
     resetWizard();
   }, [resetWizard]);
 
+  const closePane = useCallback(() => {
+    if (stepRef.current === "confirm") {
+      returnToReview();
+      return;
+    }
+    cancelAll();
+    setPaneOpen(false);
+  }, [cancelAll, returnToReview]);
+
+  const cancelProdConfirmation = useCallback(() => {
+    setProdPendingMode(null);
+    setStep("review");
+    requestAnimationFrame(() => continueButtonRef.current?.focus());
+  }, []);
+
+  const openPane = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      previouslyFocused.current = event.currentTarget;
+      resetWizard();
+      setPaneOpen(true);
+    },
+    [resetWizard]
+  );
+
+  const downloadDiagnostics = useCallback(() => {
+    if (!diagnosticImport) return;
+    const report = createImportDiagnosticReport(
+      diagnosticImport.fileCount,
+      diagnosticImport.parse,
+      diagnosticImport
+    );
+    saveAs(
+      new Blob([JSON.stringify(report, null, 2)], {
+        type: "application/json;charset=utf-8",
+      }),
+      IMPORT_DIAGNOSTIC_REPORT_FILE_NAME
+    );
+    setStatusMessage("Import diagnostic report downloaded locally.");
+  }, [diagnosticImport]);
+
   useEffect(() => {
-    // Prod friction owns focus trap + Esc while open.
-    if (prodPendingMode) return;
-    const open =
-      compact &&
-      (step === "review" ||
-        step === "confirm" ||
-        (!!error && step === "upload"));
-    if (!open && !(step === "confirm" && !compact)) return;
+    if (!compact || !paneOpen) return;
     const target = dialogRef.current;
     if (!target) return;
 
-    previouslyFocused.current = document.activeElement as HTMLElement | null;
+    if (!previouslyFocused.current) {
+      previouslyFocused.current = document.activeElement as HTMLElement | null;
+    }
+
+    return () => {
+      previouslyFocused.current?.focus?.();
+      previouslyFocused.current = null;
+    };
+  }, [compact, paneOpen]);
+
+  useEffect(() => {
+    // Prod friction owns focus trap + Escape while open.
+    if (!compact || !paneOpen || prodPendingMode) return;
+    const target = dialogRef.current;
+    if (!target) return;
 
     const focusables = () =>
       Array.from(
@@ -265,12 +548,8 @@ export function ImportTerraform({
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
-        if (prodPendingMode) {
-          setProdPendingMode(null);
-          return;
-        }
-        if (step === "confirm") setStep("review");
-        else cancelAll();
+        if (stepRef.current === "confirm") returnToReview();
+        else closePane();
         return;
       }
       if (e.key !== "Tab") return;
@@ -290,9 +569,34 @@ export function ImportTerraform({
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      previouslyFocused.current?.focus?.();
     };
-  }, [compact, step, error, cancelAll, prodPendingMode]);
+  }, [compact, paneOpen, prodPendingMode, closePane, returnToReview]);
+
+  useEffect(() => {
+    if (!prodPendingMode && (!compact || !paneOpen)) return;
+    const activeLayerAttribute = prodPendingMode
+      ? "data-prod-friction-dialog"
+      : "data-import-pane";
+    const background = Array.from(document.body.children).filter(
+      (element) => !element.hasAttribute(activeLayerAttribute)
+    );
+    const previous = background.map((element) => ({
+      element,
+      ariaHidden: element.getAttribute("aria-hidden"),
+      inert: element.hasAttribute("inert"),
+    }));
+    background.forEach((element) => {
+      element.setAttribute("aria-hidden", "true");
+      element.setAttribute("inert", "");
+    });
+    return () => {
+      previous.forEach(({ element, ariaHidden, inert }) => {
+        if (ariaHidden === null) element.removeAttribute("aria-hidden");
+        else element.setAttribute("aria-hidden", ariaHidden);
+        if (!inert) element.removeAttribute("inert");
+      });
+    };
+  }, [compact, paneOpen, prodPendingMode]);
 
   const skippedGroups = useMemo(() => groupSkipped(skipped), [skipped]);
 
@@ -313,11 +617,18 @@ export function ImportTerraform({
       aria-label="Import steps"
     >
       {(
-        [
-          ["upload", "1. Upload"],
-          ["review", "2. Review mapping"],
-          ["confirm", "3. Confirm"],
-        ] as const
+        (rootProfiles.length > 1
+          ? [
+              ["upload", "1. Upload"],
+              ["profile", "2. Variable profile"],
+              ["review", "3. Review mapping"],
+              ["confirm", "4. Confirm"],
+            ]
+          : [
+              ["upload", "1. Upload"],
+              ["review", "2. Review mapping"],
+              ["confirm", "3. Confirm"],
+            ]) as Array<[WizardStep, string]>
       ).map(([id, label]) => {
         const active = step === id;
         const done =
@@ -373,6 +684,9 @@ export function ImportTerraform({
                 <th scope="col" className="px-3 py-2 font-medium">
                   Scope
                 </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  Selection
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -381,6 +695,11 @@ export function ImportTerraform({
                 const scope = normalizeScope(r.scope);
                 const scopeValue =
                   scope.kind === "shared" ? "shared" : scope.environmentId;
+                const missingFields = draftValidation.get(r.id) ?? [];
+                const invalidReferenceFieldsForResource =
+                  invalidReferenceValidation.get(r.id) ?? [];
+                const invalidCompatibilityFieldsForResource =
+                  invalidCompatibilityValidation.get(r.id) ?? [];
                 return (
                   <tr key={r.id} className="bg-white dark:bg-slate-900">
                     <td className="px-3 py-2 align-top">
@@ -392,9 +711,21 @@ export function ImportTerraform({
                           <div className="font-medium text-slate-900 dark:text-slate-100">
                             {domainLabel(r.type)}
                           </div>
-                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                            {r.type}
-                          </div>
+                          {missingFields.length > 0 && (
+                            <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">
+                              Needs: {missingFields.join(", ")}
+                            </p>
+                          )}
+                          {invalidReferenceFieldsForResource.length > 0 && (
+                            <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">
+                              Invalid reference: {invalidReferenceFieldsForResource.join(", ")}
+                            </p>
+                          )}
+                          {invalidCompatibilityFieldsForResource.length > 0 && (
+                            <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">
+                              Invalid selection: {invalidCompatibilityFieldsForResource.join(", ")}
+                            </p>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -402,23 +733,37 @@ export function ImportTerraform({
                       <div className="text-slate-800 dark:text-slate-200">
                         {resourceDisplayName(r)}
                       </div>
-                      <div className="text-[10px] text-slate-400 font-mono">
-                        .{r.tfName}
-                      </div>
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <SegmentedControl
-                        ariaLabel={`Existing or create for ${domainLabel(r.type)} ${resourceDisplayName(r)}`}
-                        size="sm"
-                        value={r.useExisting ? "existing" : "create"}
-                        onChange={(next) =>
-                          setDraftExisting(r.id, next === "existing")
-                        }
-                        options={[
-                          { value: "existing", label: "Existing" },
-                          { value: "create", label: "Create" },
-                        ]}
-                      />
+                      <fieldset>
+                        <legend className="sr-only">
+                          Existing or create for {domainLabel(r.type)} {resourceDisplayName(r)}
+                        </legend>
+                        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-950 focus-within:ring-2 focus-within:ring-sky-500 focus-within:ring-offset-1 dark:focus-within:ring-offset-slate-900">
+                          {([
+                            [true, "Existing"],
+                            [false, "Create"],
+                          ] as const).map(([useExisting, label]) => (
+                            <label
+                              key={label}
+                              className={`cursor-pointer rounded-md px-2.5 py-1 text-[11px] font-medium ${
+                                r.useExisting === useExisting
+                                  ? "bg-white text-sky-700 shadow-sm dark:bg-slate-800 dark:text-sky-300"
+                                  : "text-slate-600 dark:text-slate-400"
+                              }`}
+                            >
+                              <input
+                                type="radio"
+                                name={`existing-${r.id}`}
+                                className="sr-only"
+                                checked={r.useExisting === useExisting}
+                                onChange={() => setDraftExisting(r.id, useExisting)}
+                              />
+                              {label}
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
                     </td>
                     <td className="px-3 py-2 align-top">
                       <label className="sr-only" htmlFor={`scope-${r.id}`}>
@@ -445,6 +790,17 @@ export function ImportTerraform({
                         {scopeLabel(scope, environments)}
                       </div>
                     </td>
+                    <td className="px-3 py-2 align-top">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Deselect ${domainLabel(r.type)} ${resourceDisplayName(r)}`}
+                        onClick={() => removeDraftResource(r.id)}
+                      >
+                        Deselect
+                      </Button>
+                    </td>
                   </tr>
                 );
               })}
@@ -469,12 +825,26 @@ export function ImportTerraform({
                 <p className="font-medium">
                   {g.title} <Badge tone="amber">{g.count}</Badge>
                 </p>
+                {g.help && (
+                  <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-200/70">
+                    {g.help}
+                  </p>
+                )}
                 <ul className="mt-1 ml-3 list-disc text-xs text-amber-800 dark:text-amber-200/80 space-y-0.5">
                   {g.items.slice(0, 12).map((s, i) => (
-                    <li key={`${s.type}-${s.name}-${i}`}>{skippedTitle(s)}</li>
+                    <li key={`${s.type}-${s.name}-${i}`}>{skippedItemIdentity(s)}</li>
                   ))}
                   {g.items.length > 12 && (
-                    <li>…and {g.items.length - 12} more</li>
+                    <li className="list-none -ml-3">
+                      <details>
+                        <summary className="cursor-pointer">Show {g.items.length - 12} more</summary>
+                        <ul className="mt-1 ml-3 list-disc space-y-0.5">
+                          {g.items.slice(12).map((s, i) => (
+                            <li key={`${s.type}-${s.name}-${i + 12}`}>{skippedItemIdentity(s)}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    </li>
                   )}
                 </ul>
               </li>
@@ -493,48 +863,26 @@ export function ImportTerraform({
             Show detail ({warnings.length} note
             {warnings.length === 1 ? "" : "s"})
           </summary>
-          <ul className="mt-2 max-h-36 overflow-auto space-y-1 list-disc pl-4">
-            {warnings.slice(0, 40).map((w, i) => (
-              <li key={i}>
-                {w.replace(/resource "|data "/g, "").replace(/"/g, "")}
-              </li>
-            ))}
-            {warnings.length > 40 && (
-              <li>…and {warnings.length - 40} more</li>
-            )}
-          </ul>
+          <p className="mt-2">
+            {warnings.length} import note{warnings.length === 1 ? "" : "s"} are available in the diagnostic report.
+          </p>
         </details>
       )}
-
-      <div className="flex flex-wrap gap-2 justify-end">
-        <Button type="button" variant="secondary" size="sm" onClick={cancelAll}>
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          disabled={draft.length === 0}
-          onClick={goConfirm}
-        >
-          Continue ({draft.length})
-        </Button>
-      </div>
     </div>
   );
 
   const confirmPanel = (
     <div className="space-y-3">
-      <p
-        id={titleId}
+      <h4
+        ref={confirmTitleRef}
+        id={confirmTitleId}
+        tabIndex={-1}
         className="text-sm font-medium text-slate-900 dark:text-slate-100"
       >
         Import {draft.length} resource{draft.length === 1 ? "" : "s"}?
-      </p>
+      </h4>
       <p className="text-sm text-slate-600 dark:text-slate-400">
-        {state.resources.length > 0
-          ? `Your project already has ${state.resources.length} resource(s). Choose how to apply — nothing changes until you pick an option. Esc goes back to review.`
-          : "Nothing is changed until you confirm. Esc goes back to review."}
+        Choose how to apply. Nothing changes until you pick an option. Esc goes back to review.
       </p>
       <ul className="text-xs text-slate-500 max-h-28 overflow-auto space-y-1 border border-slate-200 dark:border-slate-700 rounded-lg p-2">
         {draft.map((r) => (
@@ -557,35 +905,6 @@ export function ImportTerraform({
           </li>
         ))}
       </ul>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          onClick={() => apply("replace")}
-        >
-          Replace all
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={() => apply("merge")}
-        >
-          Merge into current
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => setStep("review")}
-        >
-          Back
-        </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={cancelAll}>
-          Cancel
-        </Button>
-      </div>
     </div>
   );
 
@@ -602,8 +921,7 @@ export function ImportTerraform({
       </Button>
       {!compact && (
         <Hint>
-          Client-side only — files never leave your browser. Current project has{" "}
-          {state.resources.length} resource(s).
+          Client-side only — files never leave your browser.
         </Hint>
       )}
     </div>
@@ -613,8 +931,36 @@ export function ImportTerraform({
     <>
       {stepIndicator}
       {step === "upload" && uploadPanel}
+      {step === "profile" && (
+        <div className="space-y-3">
+          <div>
+            <h4 className="text-sm font-medium text-slate-900 dark:text-slate-100">
+              Choose variable profile
+            </h4>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+              Variables are applied only for this import review.
+            </p>
+          </div>
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200" htmlFor="root-variable-profile">
+            Root variable profile
+          </label>
+          <select
+            id="root-variable-profile"
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+            value={selectedRootProfile}
+            onChange={(event) => setSelectedRootProfile(event.target.value)}
+          >
+            <option value="">Select a profile</option>
+            {rootProfiles.map((profile) => (
+              <option key={profile.path} value={profile.path}>
+                {profile.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {error && step === "upload" && (
-        <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 dark:bg-rose-950/40 dark:border-rose-700 p-3 text-sm text-rose-800 dark:text-rose-200">
+        <div role="alert" aria-live="assertive" className="mt-3 rounded-lg border border-rose-300 bg-rose-50 dark:bg-rose-950/40 dark:border-rose-700 p-3 text-sm text-rose-800 dark:text-rose-200">
           {error}
           <div className="mt-2">
             <Button
@@ -633,51 +979,97 @@ export function ImportTerraform({
     </>
   );
 
+  const actions = (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {diagnosticImport && step !== "upload" && (
+        <Button type="button" variant="secondary" size="sm" onClick={downloadDiagnostics}>
+          Download report
+        </Button>
+      )}
+      {step === "upload" && (
+        <Button type="button" variant="ghost" size="sm" onClick={compact ? closePane : cancelAll}>
+          Cancel
+        </Button>
+      )}
+      {step === "profile" && (
+        <>
+          <Button type="button" variant="ghost" size="sm" onClick={cancelAll}>
+            Cancel
+          </Button>
+          <Button type="button" variant="primary" size="sm" disabled={!selectedRootProfile || busy} onClick={mapSelectedProfile}>
+            {busy ? "Mapping…" : "Review mapping"}
+          </Button>
+        </>
+      )}
+      {step === "review" && (
+        <>
+          <Button type="button" variant="ghost" size="sm" onClick={compact ? closePane : cancelAll}>
+            Cancel
+          </Button>
+          <Button ref={continueButtonRef} type="button" variant="primary" size="sm" disabled={draft.length === 0 || invalidDraftCount > 0} onClick={goConfirm}>
+            Continue ({draft.length})
+          </Button>
+        </>
+      )}
+      {step === "confirm" && (
+        <>
+          <Button type="button" variant="primary" size="sm" onClick={() => apply("replace")}>
+            Replace all
+          </Button>
+          <Button type="button" variant="secondary" size="sm" onClick={() => apply("merge")}>
+            Merge into current
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={returnToReview}>
+            Back
+          </Button>
+        </>
+      )}
+    </div>
+  );
+
   if (compact) {
-    const showModal =
-      step === "review" ||
-      step === "confirm" ||
-      (!!error && step === "upload" && !busy);
     return (
       <>
         {fileInput}
-        {step === "upload" && !error && uploadPanel}
-        {busy && step === "upload" && (
-          <Button type="button" variant="secondary" size="sm" disabled>
-            Reading…
-          </Button>
-        )}
-        {showModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+        <Button type="button" variant="secondary" size="sm" onClick={openPane}>
+          Import existing
+        </Button>
+        {paneOpen && createPortal(
+          <div data-import-pane className="fixed inset-0 z-50 flex justify-end bg-black/40">
+            <div aria-hidden="true" className="absolute inset-0" onClick={closePane} />
             <div
               ref={dialogRef}
               role="dialog"
               aria-modal="true"
-              aria-labelledby={titleId}
-              className="w-full max-w-3xl max-h-[90vh] overflow-auto rounded-2xl bg-white dark:bg-slate-900 shadow-xl p-5"
+              aria-labelledby={step === "confirm" ? confirmTitleId : paneTitleId}
+              className="relative flex h-full w-full max-w-[min(680px,48vw)] flex-col bg-white shadow-xl dark:bg-slate-900 max-md:max-w-none"
             >
-              <div className="flex items-center justify-between mb-3">
-                <h3
-                  id={titleId}
-                  className="text-base font-semibold text-slate-900 dark:text-white"
-                >
-                  Import existing
-                </h3>
-                <Badge tone="violet">Beta</Badge>
-              </div>
-              {body}
+              <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-700">
+                <div>
+                  <h3 id={paneTitleId} className="text-base font-semibold text-slate-900 dark:text-white">Import existing</h3>
+                  <Badge tone="violet">Beta</Badge>
+                </div>
+                <Button type="button" variant="ghost" size="sm" aria-label="Close import" onClick={closePane}>Close</Button>
+              </header>
+              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{body}</div>
+              <footer className="shrink-0 border-t border-slate-200 bg-white px-5 py-3 dark:border-slate-700 dark:bg-slate-900">{actions}</footer>
+              <p className="sr-only" role="status" aria-live="polite">{statusMessage}</p>
             </div>
-          </div>
+          </div>,
+          document.body
         )}
-      {prodPendingMode && activeEnv && (
-        <ProdFrictionDialog
-          environment={activeEnv}
-          variant="import"
-          showMerge
-          onReplace={() => commitImport("replace")}
-          onMerge={() => commitImport("merge")}
-          onCancel={() => setProdPendingMode(null)}
-        />
+      {prodPendingMode && activeEnv && createPortal(
+        <div data-prod-friction-dialog>
+          <ProdFrictionDialog
+            environment={activeEnv}
+            variant="import"
+            showMerge
+            onReplace={() => commitImport("replace")}
+            onMerge={() => commitImport("merge")}
+            onCancel={cancelProdConfirmation}
+          />
+        </div>,
+        document.body
       )}
       </>
     );
@@ -704,16 +1096,21 @@ export function ImportTerraform({
       >
         {body}
       </div>
+      <div className="mt-4">{actions}</div>
+      <p className="sr-only" role="status" aria-live="polite">{statusMessage}</p>
 
-      {prodPendingMode && activeEnv && (
-        <ProdFrictionDialog
-          environment={activeEnv}
-          variant="import"
-          showMerge
-          onReplace={() => commitImport("replace")}
-          onMerge={() => commitImport("merge")}
-          onCancel={() => setProdPendingMode(null)}
-        />
+      {prodPendingMode && activeEnv && createPortal(
+        <div data-prod-friction-dialog>
+          <ProdFrictionDialog
+            environment={activeEnv}
+            variant="import"
+            showMerge
+            onReplace={() => commitImport("replace")}
+            onMerge={() => commitImport("merge")}
+            onCancel={cancelProdConfirmation}
+          />
+        </div>,
+        document.body
       )}
     </Card>
   );

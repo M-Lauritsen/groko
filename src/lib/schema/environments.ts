@@ -8,6 +8,7 @@ import type {
   ResourceInstance,
   ResourceScope,
 } from "./types";
+import { isReferenceValue } from "./types";
 
 /** Types that default to env-scoped when added from the catalogue. */
 const ENV_SCOPED_DEFAULT_TYPES = new Set([
@@ -117,8 +118,8 @@ export function resourcesVisibleInEnv(
  * Shared ↔ shared OK; shared ↔ same-env OK; envA ↔ envB blocked.
  */
 export function canReference(
-  from: ResourceInstance,
-  to: ResourceInstance
+  from: Pick<ResourceInstance, "scope">,
+  to: Pick<ResourceInstance, "scope">
 ): boolean {
   const a = normalizeScope(from.scope);
   const b = normalizeScope(to.scope);
@@ -130,6 +131,80 @@ export function canReference(
     return b.kind === "environment" && a.environmentId === b.environmentId;
   }
   return false;
+}
+
+/** Finds the first type-compatible resource that is also scope-compatible. */
+export function findScopeCompatibleResource(
+  from: Pick<ResourceInstance, "scope">,
+  resources: ResourceInstance[],
+  type: string
+): ResourceInstance | undefined {
+  return resources.find(
+    (resource) => resource.type === type && canReference(from, resource)
+  );
+}
+
+/**
+ * Maps references in the resource value shapes the domain owns. Arbitrary
+ * object-valued fields (such as tags) are deliberately left untouched.
+ */
+export function mapResourceReferences(
+  resource: ResourceInstance,
+  mapReference: (reference: import("./types").ReferenceValue) =>
+    | import("./types").ReferenceValue
+    | undefined
+): ResourceInstance {
+  function mapSecretRows(value: unknown): unknown {
+    if (!Array.isArray(value)) return value;
+    return value.map((row) => {
+      if (typeof row !== "object" || row === null || Array.isArray(row)) {
+        return row;
+      }
+      const secret = row as Record<string, unknown>;
+      if (!isReferenceValue(secret.key_vault_id)) return row;
+      const keyVaultId = mapReference(secret.key_vault_id);
+      if (keyVaultId) return { ...secret, key_vault_id: keyVaultId };
+      const withoutKeyVault = { ...secret };
+      delete withoutKeyVault.key_vault_id;
+      return withoutKeyVault;
+    });
+  }
+
+  const values = Object.fromEntries(
+    Object.entries(resource.values).flatMap(([key, value]) => {
+      if (isReferenceValue(value)) {
+        const mapped = mapReference(value);
+        return mapped === undefined ? [] : [[key, mapped]];
+      }
+      if (key === "app_secrets") return [[key, mapSecretRows(value)]];
+      return [[key, value]];
+    })
+  );
+  return { ...resource, values };
+}
+
+/** Applies a scope change and clears invalid references across the collection. */
+export function withScopeAndValidReferences(
+  resource: ResourceInstance,
+  scope: ResourceScope,
+  resources: ResourceInstance[]
+): ResourceInstance[] {
+  const scopedResources = resources.map((candidate) =>
+    candidate.id === resource.id
+      ? { ...candidate, scope: normalizeScope(scope) }
+      : candidate
+  );
+
+  function withValidReferences(candidate: ResourceInstance): ResourceInstance {
+    return mapResourceReferences(candidate, (reference) => {
+      const target = scopedResources.find(
+        (targetCandidate) => targetCandidate.id === reference.resourceId
+      );
+      return target && canReference(candidate, target) ? reference : undefined;
+    });
+  }
+
+  return scopedResources.map(withValidReferences);
 }
 
 /**

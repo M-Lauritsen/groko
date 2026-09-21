@@ -17,6 +17,9 @@ export type TokenType =
   | "RPAREN"
   | "COMMA"
   | "DOT"
+  | "QUESTION"
+  | "COLON"
+  | "OPERATOR"
   | "HEREDOC"
   | "EOF";
 
@@ -164,6 +167,19 @@ export function tokenize(input: string): Token[] {
       continue;
     }
 
+    // Operators must remain tokens so unsupported expressions can be skipped intact.
+    const operator = [">=", "<=", "==", "!=", "&&", "||"].find((candidate) => input.startsWith(candidate, i));
+    if (operator) {
+      for (let index = 0; index < operator.length; index++) advance();
+      push("OPERATOR", operator, startLine, startCol);
+      continue;
+    }
+    if ("+-*/%<>!".includes(ch)) {
+      advance();
+      push("OPERATOR", ch, startLine, startCol);
+      continue;
+    }
+
     // Single-char tokens
     const singles: Record<string, TokenType> = {
       "=": "EQUALS",
@@ -175,6 +191,8 @@ export function tokenize(input: string): Token[] {
       ")": "RPAREN",
       ",": "COMMA",
       ".": "DOT",
+      "?": "QUESTION",
+      ":": "COLON",
     };
     if (singles[ch]) {
       advance();
@@ -182,7 +200,7 @@ export function tokenize(input: string): Token[] {
       continue;
     }
 
-    // Skip unknown characters (e.g. ?, :, !, etc.)
+    // Skip unknown characters.
     advance();
   }
 
