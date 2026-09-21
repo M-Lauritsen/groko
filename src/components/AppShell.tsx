@@ -17,6 +17,8 @@ import { tierShortLabel } from '@/lib/schema/environments';
 import { normalizeScope, resourcesVisibleInEnv } from '@/lib/schema/environments';
 import { TierBadge } from '@/components/project/TierBadge';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { ResourceGuide } from '@/components/resources/ResourceGuide';
+import { ProjectPersistence } from '@/components/project/ProjectPersistence';
 
 type MainTab = 'environment' | 'builder' | 'export';
 type EnvironmentView = 'overview' | 'setup' | 'environments';
@@ -71,8 +73,9 @@ function ThemeToggle() {
 
 function ShellInner() {
 	const [tab, setTab] = useState<MainTab>('environment');
-	const [environmentView, setEnvironmentView] = useState<EnvironmentView>('overview');
+	const [environmentView, setEnvironmentView] = useState<EnvironmentView>('setup');
 	const [resourcesView, setResourcesView] = useState<ResourcesViewMode>('list');
+	const [guideOpen, setGuideOpen] = useState(false);
 	const { state, setActiveEnvironment } = useProject();
 
 	const activeId = state.activeEnvironmentId || state.environments[0]?.id || 'dev';
@@ -92,9 +95,9 @@ function ShellInner() {
 	const scopedResourceCount = visibleResources.length - sharedResourceCount;
 
 	return (
-		<div className="min-h-screen flex flex-col bg-slate-100 dark:bg-slate-950">
+		<div className="min-h-screen flex flex-col bg-slate-100 dark:bg-[#0f172a]">
 			<UndoRedoKeyboard />
-			<header className="sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur">
+			<header className="sticky top-0 z-20 border-b border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-[#142338]/90 backdrop-blur">
 				<div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
 					<div className="flex items-center gap-3 min-w-0">
 						<div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white text-lg shadow-sm">
@@ -121,6 +124,19 @@ function ShellInner() {
 					/>
 
 					<ThemeToggle />
+					<ProjectPersistence />
+					<Button
+						variant="secondary"
+						size="sm"
+						aria-label="Resource guide"
+						onClick={() => setGuideOpen(true)}>
+						<span className="hidden sm:inline">Resource guide</span>
+						<span
+							className="sm:hidden"
+							aria-hidden>
+							Guide
+						</span>
+					</Button>
 					<div className="hidden sm:flex items-center gap-2">
 						<UndoRedoControls compact />
 						<ImportTerraform
@@ -142,15 +158,17 @@ function ShellInner() {
 			<main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
 				{tab === 'environment' && (
 					<div className="max-w-5xl mx-auto space-y-5">
-						<div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm p-5">
+						<div className="rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-[#172638] shadow-sm p-5">
 							<div className="flex flex-wrap items-center justify-between gap-3 mb-2">
 								<div>
 									<h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
 										Active environment
 									</h2>
-									<p className="text-sm text-slate-500 mt-1">
-										Choose <strong>Dev</strong>, <strong>Staging</strong>, or <strong>Prod</strong> (required). Knobs
-										and resource visibility follow this tier.
+									<p className="text-sm text-slate-500 dark:text-slate-300 mt-1">
+										This is the environment you are currently editing. It sets the active tier (<strong>Dev</strong>,
+										<strong>Staging</strong>, or <strong>Prod</strong>) and controls the knobs, rules, and resource
+										visibility for this workspace. For example, switching to <strong>Prod</strong> applies production-focused
+										settings and stricter review checks.
 									</p>
 								</div>
 								<TierBadge />
@@ -170,7 +188,7 @@ function ShellInner() {
 							<div>
 								<h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Environment workspace</h2>
 								<p className="text-sm text-slate-500 mt-1">
-									Review the project at a glance, then open only the settings you need.
+									Step 1 of 3: configure your Environment before defining Resources and preparing Export.
 								</p>
 							</div>
 							<SegmentedControl
@@ -189,14 +207,14 @@ function ShellInner() {
 						{environmentView === 'overview' && (
 							<div className="space-y-4">
 								<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-									<div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+									<div className="rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-[#172638] p-4">
 										<p className="text-xs font-medium uppercase tracking-wide text-slate-500">Project</p>
 										<p className="mt-2 truncate text-lg font-semibold text-slate-900 dark:text-slate-100">
 											{state.config.name || 'Unnamed project'}
 										</p>
 										<p className="mt-1 text-xs text-slate-500">{state.config.location || 'Location not set'}</p>
 									</div>
-									<div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+									<div className="rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-[#172638] p-4">
 										<p className="text-xs font-medium uppercase tracking-wide text-slate-500">Active environment</p>
 										<p className="mt-2 truncate text-lg font-semibold text-slate-900 dark:text-slate-100">
 											{activeEnvironment?.displayName ?? 'None'}
@@ -205,7 +223,7 @@ function ShellInner() {
 											{activeEnvironment ? tierShortLabel(activeEnvironment) : 'Add an environment to begin'}
 										</p>
 									</div>
-									<div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+									<div className="rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-[#172638] p-4">
 										<p className="text-xs font-medium uppercase tracking-wide text-slate-500">Resources in view</p>
 										<p className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
 											{visibleResources.length}
@@ -214,7 +232,7 @@ function ShellInner() {
 											{sharedResourceCount} shared · {scopedResourceCount} environment-scoped
 										</p>
 									</div>
-									<div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+									<div className="rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-[#172638] p-4">
 										<p className="text-xs font-medium uppercase tracking-wide text-slate-500">Environments</p>
 										<p className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
 											{state.environments.length}
@@ -224,7 +242,7 @@ function ShellInner() {
 								</div>
 
 								<div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
-									<div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
+									<div className="rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-[#172638] p-5">
 										<div className="flex flex-wrap items-start justify-between gap-3">
 											<div>
 												<h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -255,7 +273,7 @@ function ShellInner() {
 											</Button>
 										</div>
 									</div>
-									<div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
+									<div className="rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-[#172638] p-5">
 										<h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
 											Configuration snapshot
 										</h2>
@@ -278,7 +296,7 @@ function ShellInner() {
 							</div>
 						)}
 
-						{environmentView === 'setup' && <ProjectSetup />}
+						{environmentView === 'setup' && <ProjectSetup onContinue={() => setTab('builder')} />}
 						{environmentView === 'environments' && <EnvironmentsPanel hideActiveSwitcher />}
 					</div>
 				)}
@@ -323,6 +341,8 @@ function ShellInner() {
 					</div>
 				)}
 			</main>
+
+			{guideOpen && <ResourceGuide onClose={() => setGuideOpen(false)} />}
 
 			<footer className="border-t border-slate-200 dark:border-slate-800 py-3 text-center text-[11px] text-slate-400">
 				Azure TF Builder · client-side generation · no secrets leave your browser · azurerm {'~>'} 4.0

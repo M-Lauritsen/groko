@@ -1,38 +1,38 @@
 {
-  "name": "azure-tf-builder",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint",
-    "test": "tsx scripts/test-invariants.ts && tsx scripts/test-export-map.ts && tsx scripts/test-generate.ts && tsx scripts/test-graph-layout.ts && tsx scripts/test-history.ts && tsx scripts/test-prod-friction.ts && tsx scripts/test-empty-resources.ts && tsx scripts/test-hub-dns-ownership.ts",
-    "test:generate": "tsx scripts/test-generate.ts",
-    "test:history": "tsx scripts/test-history.ts",
-    "test:graph": "tsx scripts/test-graph-layout.ts",
-    "test:export-map": "tsx scripts/test-export-map.ts",
-    "test:prod-friction": "tsx scripts/test-prod-friction.ts",
-    "test:empty-resources": "tsx scripts/test-empty-resources.ts && tsx scripts/test-hub-dns-ownership.ts",
-    "test:invariants": "tsx scripts/test-invariants.ts"
-  },
-  "dependencies": {
-    "file-saver": "^2.0.5",
-    "jszip": "^3.10.2",
-    "next": "16.3.5",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/file-saver": "^2.0.7",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.3.5",
-    "tailwindcss": "^4",
-    "tsx": "^4.23.13",
-    "typescript": "^5"
-  }
+	"name": "azure-tf-builder",
+	"version": "0.1.0",
+	"private": true,
+	"scripts": {
+		"dev": "next dev",
+		"build": "next build",
+		"start": "next start",
+		"lint": "eslint",
+		"test": "tsx scripts/test-invariants.ts && tsx scripts/test-export-map.ts && tsx scripts/test-generate.ts && tsx scripts/test-graph-layout.ts && tsx scripts/test-history.ts && tsx scripts/test-prod-friction.ts && tsx scripts/test-empty-resources.ts && tsx scripts/test-hub-dns-ownership.ts && tsx scripts/test-project-persistence.ts",
+		"test:generate": "tsx scripts/test-generate.ts",
+		"test:history": "tsx scripts/test-history.ts",
+		"test:graph": "tsx scripts/test-graph-layout.ts",
+		"test:export-map": "tsx scripts/test-export-map.ts",
+		"test:prod-friction": "tsx scripts/test-prod-friction.ts",
+		"test:empty-resources": "tsx scripts/test-empty-resources.ts && tsx scripts/test-hub-dns-ownership.ts",
+		"test:invariants": "tsx scripts/test-invariants.ts"
+	},
+	"dependencies": {
+		"file-saver": "^2.0.5",
+		"jszip": "^3.10.2",
+		"next": "16.3.5",
+		"react": "19.2.8",
+		"react-dom": "19.2.8"
+	},
+	"devDependencies": {
+		"@tailwindcss/postcss": "^4",
+		"@types/file-saver": "^2.0.7",
+		"@types/node": "^20",
+		"@types/react": "^19",
+		"@types/react-dom": "^19",
+		"eslint": "^9",
+		"eslint-config-next": "16.3.5",
+		"tailwindcss": "^4",
+		"tsx": "^4.23.13",
+		"typescript": "^5"
+	}
 }
