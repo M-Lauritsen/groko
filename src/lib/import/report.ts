@@ -119,6 +119,7 @@ function parseDiagnosticMessage(warning: string): string {
     "Unexpected token after",
     "Unsupported value at",
     "Fatal parse error:",
+    "Configuration ignored:",
   ];
   const markerIndex = markers
     .map((marker) => warning.indexOf(marker))

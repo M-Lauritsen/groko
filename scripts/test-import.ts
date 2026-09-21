@@ -726,6 +726,75 @@ import { to = module.example[0].azurerm_resource_group.main id = "ignored" }`,
     assert.equal(profileSummary.warnings.some((warning) => warning.includes("Unsupported value")), false);
   }
 
+  const configurationRecovery = parseHclFiles([
+    {
+      name: "config/locals.tf",
+      content: `
+locals {
+  safe_name = var.resource_group_name
+  dynamic_name = lower(var.resource_group_name)
+}
+
+output "dynamic" {
+  value = lower(local.safe_name)
+  precondition {
+    condition     = local.safe_name != ""
+    error_message = "name is required"
+  }
+}
+`,
+    },
+    {
+      name: "config/variables.tf",
+      content: `
+variable "resource_group_name" {
+  default = "rg-config"
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.resource_group_name))
+    error_message = "invalid"
+  }
+}
+`,
+    },
+    {
+      name: "config/main.tf",
+      content: `resource "azurerm_resource_group" "after_configuration" {
+  name     = local.safe_name
+  location = "westeurope"
+}`,
+    },
+  ]);
+  assert.equal(
+    configurationRecovery.blocks.some((block) => block.name === "after_configuration"),
+    true,
+    "configuration bodies must not prevent parsing following resources"
+  );
+  const configurationLocals = configurationRecovery.blocks.find(
+    (block) => block.type === "locals"
+  );
+  assert.deepEqual(configurationLocals?.body.attrs, {
+    safe_name: "rg-config",
+  });
+  assert.deepEqual(
+    configurationRecovery.warnings.filter((warning) => warning.includes("Configuration ignored:")),
+    ['config/locals.tf: Configuration ignored: local "dynamic_name" is not a static scalar alias']
+  );
+  const configurationReport = createImportDiagnosticReport(
+    3,
+    configurationRecovery,
+    mapToProject(configurationRecovery),
+    "2026-09-21T12:00:00.000Z"
+  );
+  assert.deepEqual(
+    configurationReport.notes.filter((note) => note.message.startsWith("Configuration ignored:")),
+    [{
+      uploadIndex: 0,
+      category: "parse",
+      message: 'Configuration ignored: local "dynamic_name" is not a static scalar alias',
+    }],
+    "ignored configuration should retain one source-attributed stable parse category"
+  );
+
   for (const profiles of [rootProfiles, [...rootProfiles].reverse()]) {
     const upload = await readImportUpload(
       profiles.map((profile) => ({

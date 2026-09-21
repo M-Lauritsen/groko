@@ -161,7 +161,11 @@ class Parser {
       }
       // provider "azurerm" { } or variable "x" { }
       if (this.at("LBRACE")) {
-        const body = kw === "variable" ? this.parseVariableBody() : this.parseBody();
+        const body = kw === "variable"
+          ? this.parseVariableBody()
+          : kw === "locals"
+            ? this.parseLocalsBody()
+            : this.parseBody();
         return {
           kind: "other",
           type: kw,
@@ -264,6 +268,21 @@ class Parser {
       if (token.type === "RBRACE") depth--;
     }
     return { attrs, blocks: [] };
+  }
+
+  /** Locals are transient aliases only; complex configuration must not enter resolver state. */
+  private parseLocalsBody(): HclBody {
+    const body = this.parseBody();
+    const attrs = Object.fromEntries(
+      Object.entries(body.attrs).filter(([name, value]) => {
+        if (isSafeLocalValue(value)) return true;
+        this.warnings.push(
+          `Configuration ignored: local "${name}" is not a static scalar alias`
+        );
+        return false;
+      })
+    );
+    return { ...body, attrs };
   }
 
   private skipBody(): void {
@@ -993,6 +1012,13 @@ function isStaticScalar(value: HclValue | undefined): value is StaticScalar {
     typeof value === "number" ||
     typeof value === "boolean" ||
     value === null
+  );
+}
+
+function isSafeLocalValue(value: HclValue): boolean {
+  return (
+    isStaticScalar(value) ||
+    (isExpressionValue(value) && /^(var|local)\.[A-Za-z_][\w-]*$/.test(value.__expr))
   );
 }
 
