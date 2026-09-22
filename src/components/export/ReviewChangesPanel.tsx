@@ -6,7 +6,8 @@ import {
   buildExportReviewSummary,
   type ExportReviewItem,
 } from "@/lib/generate/export-map";
-import { Badge, Hint } from "@/components/ui/Field";
+import { validateExistingIdentifiers } from "@/lib/generate/existing-identifiers";
+import { Badge, Button, Hint } from "@/components/ui/Field";
 import { APP_GUIDANCE } from "@/lib/help/assistance";
 import { InfoTag } from "@/components/ui/InfoTag";
 
@@ -64,13 +65,20 @@ function ReviewList({
  */
 export function ReviewChangesPanel({
   onOpenMap,
+  onOpenResource,
 }: {
   /** Jump to Folder structure Map mode to assign orphans. */
   onOpenMap?: () => void;
+  /** Opens Resource details for a validation issue. */
+  onOpenResource?: (resourceId: string) => void;
 }) {
   const { state } = useProject();
   const summary = useMemo(
     () => buildExportReviewSummary(state.resources, state.exportConfig),
+    [state.resources, state.exportConfig]
+  );
+  const identifierValidation = useMemo(
+    () => validateExistingIdentifiers(state.resources, state.exportConfig),
     [state.resources, state.exportConfig]
   );
 
@@ -131,6 +139,43 @@ export function ReviewChangesPanel({
             </button>
           )}
         </div>
+      )}
+
+      {identifierValidation.issues.length > 0 && (
+        <section
+          aria-labelledby="existing-identifier-issues"
+          className="rounded-xl border border-rose-300 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/30 overflow-hidden"
+        >
+          <header className="flex items-center justify-between gap-2 px-3 py-2 border-b border-rose-200 dark:border-rose-900">
+            <h3 id="existing-identifier-issues" className="text-xs font-semibold uppercase tracking-wide text-rose-900 dark:text-rose-100">
+              Existing identifiers need attention
+            </h3>
+            <Badge tone="amber">{identifierValidation.issues.length}</Badge>
+          </header>
+          <ul className="divide-y divide-rose-200 dark:divide-rose-900">
+            {identifierValidation.issues.map((issue) => (
+              <li key={`${issue.resourceId}:${issue.fieldKey}`} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                <p className="text-rose-950 dark:text-rose-100">
+                  <strong>{issue.resourceLabel}</strong> · {issue.resourceName} · {issue.fieldLabel}
+                  {!issue.included && (
+                    <span className="ml-1 text-amber-800 dark:text-amber-200">
+                      (unassigned; does not block once left unmapped)
+                    </span>
+                  )}
+                </p>
+                {onOpenResource && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => onOpenResource(issue.resourceId)}
+                  >
+                    Open Resource
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

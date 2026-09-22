@@ -20,6 +20,7 @@ import {
   type ReferenceValue,
   isReferenceValue,
 } from "@/lib/schema/types";
+import { resolveExistingSnapshotReference } from "@/lib/store/existing-snapshots";
 import {
   envScope,
   environmentById,
@@ -55,6 +56,8 @@ export function ResourceForm() {
     updateResource,
     updateResourceValue,
     updateExistingValue,
+    clearExistingSnapshot,
+    refreshExistingSnapshot,
     setResourceScope,
     reassignHubOwnerEnvironment,
     selectResource,
@@ -99,21 +102,8 @@ export function ResourceForm() {
   const basicFields = def.fields.filter((f) => !f.advanced);
   const advancedFields = def.fields.filter((f) => f.advanced);
   const existingFields = def.fields.filter((f) => f.existingKey);
-
   function setUseExisting(v: boolean) {
     updateResource(resource!.id, { useExisting: v });
-    if (v) {
-      const seed: Record<string, unknown> = {
-        ...resource!.existingValues,
-      };
-      for (const f of existingFields) {
-        const cur = resource!.values[f.key];
-        if (typeof cur === "string" && cur && !seed[f.key]) {
-          seed[f.key] = cur;
-        }
-      }
-      updateResource(resource!.id, { existingValues: seed });
-    }
   }
 
   function referenceType(value: ReferenceValue | undefined): string | undefined {
@@ -177,9 +167,17 @@ export function ResourceForm() {
     }
 
     if (resource!.useExisting && field.existingKey) {
+      const snapshot = resource!.existingValues[field.key];
+      const hasPopulatedSnapshot =
+        typeof snapshot === "string" && snapshot.length > 0;
+      const refresh = resolveExistingSnapshotReference(
+        resource!,
+        field.key,
+        state.resources
+      );
       return (
         <div key={field.key}>
-          <Label htmlFor={`ex-${field.key}`} required={field.required}>
+          <Label htmlFor={`ex-${field.key}`} required>
             {field.label}{" "}
             <Badge tone="amber">existing</Badge>
           </Label>
@@ -196,11 +194,36 @@ export function ResourceForm() {
               updateExistingValue(resource!.id, field.key, e.target.value)
             }
             placeholder={field.placeholder}
+            required
           />
           <Hint>
             Existing id/name used to look up this resource in Azure (not
             managed by this project).
           </Hint>
+          {(hasPopulatedSnapshot || refresh) && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {hasPopulatedSnapshot && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => clearExistingSnapshot(resource!.id, field.key)}
+                >
+                  Clear snapshot
+                </Button>
+              )}
+              {refresh && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => refreshExistingSnapshot(resource!.id, field.key)}
+                >
+                  Use current value from {formatResourceLabel(refresh.source)}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       );
     }

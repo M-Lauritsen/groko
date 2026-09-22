@@ -76,7 +76,7 @@ function ShellInner() {
 	const [environmentView, setEnvironmentView] = useState<EnvironmentView>('setup');
 	const [resourcesView, setResourcesView] = useState<ResourcesViewMode>('list');
 	const [guideOpen, setGuideOpen] = useState(false);
-	const { state, setActiveEnvironment } = useProject();
+	const { state, setActiveEnvironment, selectResource } = useProject();
 
 	const activeId = state.activeEnvironmentId || state.environments[0]?.id || 'dev';
 
@@ -337,7 +337,12 @@ function ShellInner() {
 
 				{tab === 'export' && (
 					<div className="h-[calc(100vh-8.5rem)] min-h-[520px]">
-						<ExportPanel />
+						<ExportPanel
+							onOpenResource={(resourceId) => {
+								selectResource(resourceId);
+								setTab('builder');
+							}}
+						/>
 					</div>
 				)}
 			</main>

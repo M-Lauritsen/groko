@@ -25,8 +25,13 @@ import {
   withResourceModule,
   resetExportConfig,
   buildExportReviewSummary,
+  canCopyWithMap,
 } from "../src/lib/generate/export-map";
 import { generateProject } from "../src/lib/generate/hcl";
+import {
+  canExportWithValidExistingIdentifiers,
+  validateExistingIdentifiers,
+} from "../src/lib/generate/existing-identifiers";
 import { moduleOrder } from "../src/lib/generate/modules";
 import {
   createHistory,
@@ -139,6 +144,26 @@ function main() {
     // Outside Map mode, null overrides still block (never silent)
     const noMap = canDownloadWithMap(resources, ec, { mapMode: false });
     assert.equal(noMap.ok, false);
+    const confirmedNoMap = canDownloadWithMap(resources, ec, {
+      mapMode: false,
+      leaveUnmappedConfirmed: true,
+    });
+    assert.equal(
+      confirmedNoMap.ok,
+      true,
+      "the explicit confirmation dialog must work from the Export view"
+    );
+    const blockedCopy = canCopyWithMap(resources, ec, { mapMode: false });
+    assert.equal(blockedCopy.ok, false, "Copy must not silently omit orphans");
+    const confirmedCopy = canCopyWithMap(resources, ec, {
+      mapMode: false,
+      leaveUnmappedConfirmed: true,
+    });
+    assert.equal(
+      confirmedCopy.ok,
+      true,
+      "Copy may proceed only after explicit leave-unmapped confirmation"
+    );
     console.log("✓ download gate blocks orphans; confirm allows");
   }
 
@@ -265,6 +290,48 @@ function main() {
     assert.equal(sum2.counts.updates, 1);
     assert.equal(sum2.updates[0].id, "r3");
     console.log("✓ review summary orphans + updates (folder overrides)");
+  }
+
+  // Existing identifier validation remains visible in Review for orphans, but
+  // exposes an included-only result for future Copy/ZIP gates.
+  {
+    const invalidExisting: ResourceInstance = {
+      ...sa,
+      id: "invalid-existing",
+      tfName: "invalid_existing",
+      useExisting: true,
+      values: { name: "storage-source-name" },
+      existingValues: { name: "" },
+    };
+    const orphanMap = withResourceModule(
+      defaultExportConfig(),
+      "invalid-existing",
+      null
+    );
+    const validation = validateExistingIdentifiers([invalidExisting], orphanMap);
+    assert.equal(validation.issues.length, 2, "all catalogue existingKey fields are required");
+    assert.equal(validation.includedIssues.length, 0);
+    assert.ok(validation.issues.every((issue) => issue.resourceId === "invalid-existing"));
+    assert.ok(validation.issues.every((issue) => issue.resourceLabel === "Storage Account"));
+    assert.ok(validation.issues.every((issue) => issue.resourceName === "storage-source-name"));
+    assert.ok(validation.issues.every((issue) => !issue.included));
+    const orphanGate = canExportWithValidExistingIdentifiers(
+      [invalidExisting],
+      orphanMap
+    );
+    assert.equal(
+      orphanGate.ok,
+      true,
+      "an explicitly omitted orphan must not block valid export"
+    );
+
+    const includedGate = canExportWithValidExistingIdentifiers(
+      [invalidExisting],
+      defaultExportConfig()
+    );
+    assert.equal(includedGate.ok, false);
+    assert.equal(includedGate.includedIssues.length, 2);
+    console.log("✓ Existing identifier validation retains orphan diagnostics");
   }
 
   console.log("\nAll export-map tests passed.");

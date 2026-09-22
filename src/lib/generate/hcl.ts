@@ -28,6 +28,11 @@ import {
 } from "./modules";
 import { resolveExportMap } from "./export-map";
 import type { ExportConfig } from "../schema/types";
+import {
+  existingIdentifierValue,
+  validateExistingIdentifiers,
+  type ExistingIdentifierIssue,
+} from "./existing-identifiers";
 
 function escapeHclString(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -92,6 +97,8 @@ export type GeneratedFiles = Record<string, string>;
 export interface GenerateResult {
   files: GeneratedFiles;
   sensitiveVars: { name: string; description: string; resourceLabel: string }[];
+  /** Invalid Existing identifiers present in generated diagnostic files. */
+  validationIssues: ExistingIdentifierIssue[];
 }
 
 function emitNsgRules(values: Record<string, unknown>): string {
@@ -1038,13 +1045,14 @@ function emitPrivateEndpointBlock(
 export function emitResourceBlock(
   resource: ResourceInstance,
   resources: ResourceInstance[],
-  sensitiveVars: GenerateResult["sensitiveVars"]
+  sensitiveVars: GenerateResult["sensitiveVars"],
+  existingIdentifierIssues: ExistingIdentifierIssue[] = []
 ): string {
   const def = getResourceType(resource.type);
   if (!def) return `# Unknown type: ${resource.type}\n`;
 
   if (resource.useExisting) {
-    return emitDataBlock(resource, def.fields);
+    return emitDataBlock(resource, def.fields, existingIdentifierIssues);
   }
 
   if (resource.type === "azurerm_private_endpoint") {
@@ -1130,19 +1138,24 @@ export function emitResourceBlock(
   return main;
 }
 
-function emitDataBlock(resource: ResourceInstance, fields: FieldDef[]): string {
+function emitDataBlock(
+  resource: ResourceInstance,
+  fields: FieldDef[],
+  issues: ExistingIdentifierIssue[]
+): string {
   const lines: string[] = [];
   const existingKeys = fields.filter((f) => f.existingKey);
   for (const field of existingKeys) {
-    const val = resource.existingValues[field.key] ?? resource.values[field.key];
-    if (val === undefined || val === null || val === "") continue;
-    if (isReferenceValue(val)) continue; // existing should be literal
-    lines.push(`  ${field.key} = ${formatString(String(val))}`);
-  }
-  // Always need name for most data sources; ensure at least something
-  if (lines.length === 0) {
-    lines.push(`  # TODO: fill in identifying attributes for existing resource`);
-    lines.push(`  name = "TODO"`);
+    const value = existingIdentifierValue(resource, field.key);
+    if (value) {
+      lines.push(`  ${field.key} = ${formatString(value)}`);
+      continue;
+    }
+    if (issues.some((issue) => issue.fieldKey === field.key)) {
+      lines.push(
+        `  # INVALID EXISTING IDENTIFIER: ${field.label} is required before export.`
+      );
+    }
   }
   return `data "${resource.type}" "${resource.tfName}" {\n${lines.join("\n")}\n}\n`;
 }
@@ -1659,6 +1672,8 @@ export function generateProject(
   exportConfig?: ExportConfig | null
 ): GenerateResult {
   const sensitiveVars: GenerateResult["sensitiveVars"] = [];
+  const validation = validateExistingIdentifiers(resources, exportConfig);
+  const validationIssues = validation.includedIssues;
   const resolved = resolveExportMap(resources, exportConfig);
   const partitioned = resolved.byModule;
   const orderedModules = moduleOrder(Array.from(partitioned.keys()));
@@ -1688,7 +1703,14 @@ export function generateProject(
       ``,
     ];
     for (const r of modResources) {
-      bodyParts.push(emitResourceBlock(r, resources, sensitiveVars));
+      bodyParts.push(
+        emitResourceBlock(
+          r,
+          resources,
+          sensitiveVars,
+          validationIssues.filter((issue) => issue.resourceId === r.id)
+        )
+      );
     }
     setModularRefContext(null);
 
@@ -1747,7 +1769,7 @@ export function generateProject(
     orderedModules
   );
 
-  return { files, sensitiveVars: uniqueSensitive };
+  return { files, sensitiveVars: uniqueSensitive, validationIssues };
 }
 
 export function previewHcl(

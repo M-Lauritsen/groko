@@ -38,30 +38,14 @@ import {
   VALUE_EDIT_DEBOUNCE_MS,
   type HistoryStack,
 } from "./history";
-import {
-	pruneExportConfig,
-	withDomainGroupModule,
-	withResourceModule,
-	withTypeGroupModule,
-	resetExportConfig,
-} from '../generate/export-map';
-import { getResourceType } from '../schema/resources';
-import { defaultEnvironments, defaultScopeForNewResource } from '../schema/environments';
-import { mergeImportedResources } from '../import/mapToProject';
-import {
-	canRedo as historyCanRedo,
-	canUndo as historyCanUndo,
-	cloneProjectState,
-	createHistory,
-	mutateWithHistory,
-	redo as historyRedo,
-	undo as historyUndo,
-	VALUE_EDIT_DEBOUNCE_MS,
-	type HistoryStack,
-} from './history';
 import { applyStarterToState, type StarterApplyMode } from './starter-apply';
 import { reassignHubOwner, withHubOwnerOnCreate } from './hub-dns-ownership';
 import { parseProjectFile } from './project-persistence';
+import {
+  clearExistingSnapshot as clearExistingSnapshotValue,
+  refreshExistingSnapshot as refreshExistingSnapshotValue,
+  withDerivedExistingSnapshots,
+} from "./existing-snapshots";
 
 function uid(): string {
 	return `r_${Math.random().toString(36).slice(2, 10)}`;
@@ -112,6 +96,8 @@ interface ProjectContextValue {
 	updateResource: (id: string, patch: Partial<ResourceInstance>) => void;
 	updateResourceValue: (id: string, key: string, value: unknown) => void;
 	updateExistingValue: (id: string, key: string, value: unknown) => void;
+	clearExistingSnapshot: (id: string, key: string) => void;
+	refreshExistingSnapshot: (id: string, key: string) => void;
 	setResourceScope: (id: string, scope: ResourceScope) => void;
 	/** Explicit hub DNS / VNet link owner reassign (Develops #2). */
 	reassignHubOwnerEnvironment: (id: string, environmentId: string) => void;
@@ -302,6 +288,15 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     [commit]
   );
 
+  const replaceProject = useCallback(
+    (project: ProjectState | string) => {
+      const next =
+        typeof project === "string" ? parseProjectFile(project) : project;
+      commit(() => next);
+    },
+    [commit]
+  );
+
   const addResource = useCallback(
     (type: string) => {
       const def = getResourceType(type);
@@ -459,20 +454,8 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
 
         const useExisting = Boolean(def.preferUseExisting);
         const existingValues: Record<string, unknown> = {};
-        if (useExisting) {
-          for (const f of def.fields) {
-            if (f.existingKey) {
-              const cur = values[f.key];
-              if (typeof cur === "string" && cur) {
-                existingValues[f.key] = cur;
-              } else if (f.defaultValue !== undefined && typeof f.defaultValue === "string") {
-                existingValues[f.key] = f.defaultValue;
-              }
-            }
-          }
-        }
 
-        const instance = withHubOwnerOnCreate(
+        const createdInstance = withHubOwnerOnCreate(
           {
             id,
             type,
@@ -484,6 +467,9 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           },
           s.activeEnvironmentId
         );
+        const instance = useExisting
+          ? withDerivedExistingSnapshots(createdInstance, s.resources)
+          : createdInstance;
 
         return {
           ...s,
@@ -501,9 +487,13 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     (id: string, patch: Partial<ResourceInstance>) => {
       commit((s) => ({
         ...s,
-        resources: s.resources.map((r) =>
-          r.id === id ? { ...r, ...patch } : r
-        ),
+        resources: s.resources.map((r) => {
+          if (r.id !== id) return r;
+          const next = { ...r, ...patch };
+          return !r.useExisting && patch.useExisting
+            ? withDerivedExistingSnapshots(next, s.resources)
+            : next;
+        }),
       }));
     },
     [commit]
@@ -538,6 +528,32 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       }));
     },
     [commitValueEdit]
+  );
+
+  const clearExistingSnapshot = useCallback(
+    (id: string, key: string) => {
+      commit((s) => ({
+        ...s,
+        resources: s.resources.map((resource) =>
+          resource.id === id ? clearExistingSnapshotValue(resource, key) : resource
+        ),
+      }));
+    },
+    [commit]
+  );
+
+  const refreshExistingSnapshot = useCallback(
+    (id: string, key: string) => {
+      commit((s) => ({
+        ...s,
+        resources: s.resources.map((resource) =>
+          resource.id === id
+            ? refreshExistingSnapshotValue(resource, key, s.resources)
+            : resource
+        ),
+      }));
+    },
+    [commit]
   );
 
   const setResourceScope = useCallback(
@@ -685,6 +701,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       undo,
       redo,
       setConfig,
+      replaceProject,
       setActiveEnvironment,
       updateEnvironment,
       addEnvironment,
@@ -694,6 +711,8 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       updateResource,
       updateResourceValue,
       updateExistingValue,
+      clearExistingSnapshot,
+      refreshExistingSnapshot,
       setResourceScope,
       reassignHubOwnerEnvironment,
       removeResource,
@@ -712,6 +731,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       undo,
       redo,
       setConfig,
+      replaceProject,
       setActiveEnvironment,
       updateEnvironment,
       addEnvironment,
@@ -721,6 +741,8 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       updateResource,
       updateResourceValue,
       updateExistingValue,
+      clearExistingSnapshot,
+      refreshExistingSnapshot,
       setResourceScope,
       reassignHubOwnerEnvironment,
       removeResource,

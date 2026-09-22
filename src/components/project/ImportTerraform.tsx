@@ -776,6 +776,11 @@ export function ImportTerraform({
                 const partialMapping = Boolean(
                   mapping && (mapping.unmappedFieldNames.length > 0 || mapping.unsupportedConstructs.length > 0)
                 );
+                const needsAttention =
+                  partialMapping ||
+                  blockingMissingFields.length > 0 ||
+                  invalidReferenceFieldsForResource.length > 0 ||
+                  invalidCompatibilityFieldsForResource.length > 0;
                 const validationId = `import-validation-${r.id}`;
                 return (
                   <tr key={r.id} className="bg-white dark:bg-slate-900">
@@ -785,9 +790,35 @@ export function ImportTerraform({
                           {def?.icon ?? "📦"}
                         </span>
                         <div>
-                          <div className="font-medium text-slate-900 dark:text-slate-100">
-                            {domainLabel(r.type)}
-                          </div>
+                          <button
+                            ref={(element) => {
+                              if (element) editButtonRefs.current.set(r.id, element);
+                              else editButtonRefs.current.delete(r.id);
+                            }}
+                            type="button"
+                            className="inline-flex items-center gap-1.5 font-medium text-slate-900 dark:text-slate-100 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
+                            aria-label={`Edit ${domainLabel(r.type)} ${resourceDisplayName(r)}`}
+                            aria-expanded={editingResourceId === r.id}
+                            aria-controls={editingResourceId === r.id ? `import-editor-${r.id}` : undefined}
+                            onClick={() => {
+                              if (editingResourceId === r.id) closeDraftEditor();
+                              else setEditingResourceId(r.id);
+                            }}
+                          >
+                            <span
+                              aria-hidden
+                              title={needsAttention ? "Needs attention" : "Ready"}
+                              className={
+                                needsAttention
+                                  ? "text-amber-600 dark:text-amber-400"
+                                  : "text-emerald-600 dark:text-emerald-400"
+                              }
+                            >
+                              {needsAttention ? "❗" : "✓"}
+                            </span>
+                            <span>{domainLabel(r.type)}</span>
+                            <span className="sr-only">{needsAttention ? " (needs attention)" : " (ready)"}</span>
+                          </button>
                           {partialMapping && (
                             <div className="mt-1 text-xs text-amber-800 dark:text-amber-200">
                               <p>Partially mapped{mapping?.sourcePath ? ` from ${mapping.sourcePath}` : ""}.</p>
@@ -869,24 +900,6 @@ export function ImportTerraform({
                       </div>
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <Button
-                        ref={(element) => {
-                          if (element) editButtonRefs.current.set(r.id, element);
-                          else editButtonRefs.current.delete(r.id);
-                        }}
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        aria-label={`Edit ${domainLabel(r.type)} ${resourceDisplayName(r)}`}
-                        aria-expanded={editingResourceId === r.id}
-                        aria-controls={editingResourceId === r.id ? `import-editor-${r.id}` : undefined}
-                        onClick={() => {
-                          if (editingResourceId === r.id) closeDraftEditor();
-                          else setEditingResourceId(r.id);
-                        }}
-                      >
-                        Edit
-                      </Button>
                       <Button
                         type="button"
                         variant="ghost"

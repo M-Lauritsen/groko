@@ -13,7 +13,7 @@ import type {
   ProjectConfig,
   ResourceInstance,
 } from "../src/lib/schema/types";
-import { defaultExportConfig } from "../src/lib/schema/types";
+import { AZURE_LOCATIONS, defaultExportConfig } from "../src/lib/schema/types";
 import {
   canReference,
   defaultEnvironments,
@@ -190,6 +190,20 @@ function main() {
   // -------------------------------------------------------------------------
   // 1. Catalogue compatibility contracts
   // -------------------------------------------------------------------------
+  {
+    const name = "azure-location-catalogue";
+    const swedenCentral = AZURE_LOCATIONS.filter(
+      (location) => location.value === "swedencentral"
+    );
+    invariant(
+      name,
+      swedenCentral.length === 1 &&
+        swedenCentral[0]?.label === "Sweden Central",
+      "Sweden Central must be a selectable Azure location"
+    );
+    console.log(`✓ [${name}] Sweden Central location`);
+  }
+
   {
     const name = "target-role-compatibility";
     invariant(

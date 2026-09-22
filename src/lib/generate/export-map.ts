@@ -329,7 +329,7 @@ export function isOverride(
 
 /**
  * Download policy (Develops):
- * - Map mode + orphans → block unless caller has explicit leaveUnmappedConfirm.
+ * - Orphans → block unless caller has explicit leaveUnmappedConfirm.
  * - Never silently drop unmapped resources from a ZIP the user thinks is complete.
  */
 export function canDownloadWithMap(
@@ -339,6 +339,9 @@ export function canDownloadWithMap(
 ): { ok: boolean; orphans: ResourceInstance[]; reason?: string } {
   const orphans = listOrphans(resources, exportConfig);
   if (orphans.length === 0) return { ok: true, orphans };
+  if (opts.leaveUnmappedConfirmed) {
+    return { ok: true, orphans };
+  }
   if (!opts.mapMode) {
     // Overrides with null still produce orphans outside Map UI — block to be safe.
     return {
@@ -347,14 +350,20 @@ export function canDownloadWithMap(
       reason: `${orphans.length} resource(s) have no module folder. Open Map mode to assign them, or confirm leave unmapped.`,
     };
   }
-  if (opts.leaveUnmappedConfirmed) {
-    return { ok: true, orphans };
-  }
   return {
     ok: false,
     orphans,
     reason: `${orphans.length} unassigned resource(s). Assign each to a module folder, or confirm leave unmapped.`,
   };
+}
+
+/** Copy exports the same generated artifact, so it has the identical orphan gate. */
+export function canCopyWithMap(
+  resources: ResourceInstance[],
+  exportConfig: ExportConfig | null | undefined,
+  opts: { mapMode: boolean; leaveUnmappedConfirmed?: boolean }
+): { ok: boolean; orphans: ResourceInstance[]; reason?: string } {
+  return canDownloadWithMap(resources, exportConfig, opts);
 }
 
 

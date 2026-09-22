@@ -156,6 +156,7 @@ export interface ContainerAppSecret {
 export const AZURE_LOCATIONS: FieldOption[] = [
   { value: "westeurope", label: "West Europe" },
   { value: "northeurope", label: "North Europe" },
+  { value: "swedencentral", label: "Sweden Central" },
   { value: "eastus", label: "East US" },
   { value: "eastus2", label: "East US 2" },
   { value: "westus2", label: "West US 2" },

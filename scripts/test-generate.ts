@@ -5,7 +5,11 @@ import assert from "node:assert/strict";
 import { generateProject, previewHcl } from "../src/lib/generate/hcl";
 import { getStarter } from "../src/lib/schema/starters";
 import { getResourceType } from "../src/lib/schema/resources";
-import type { ProjectConfig, ResourceInstance } from "../src/lib/schema/types";
+import {
+  defaultExportConfig,
+  type ProjectConfig,
+  type ResourceInstance,
+} from "../src/lib/schema/types";
 import {
   defaultEnvironments,
   envScope,
@@ -26,6 +30,13 @@ import {
   RESOURCE_TYPE_ORDER,
   sortResourcesByBuildOrder,
 } from "../src/lib/generate/modules";
+import {
+  buildProjectZipBuffer,
+  downloadProjectZip,
+  OrphanConfirmationRequiredError,
+} from "../src/lib/generate/zip";
+import { MissingExistingIdentifierError } from "../src/lib/generate/existing-identifiers";
+import { withResourceModule } from "../src/lib/generate/export-map";
 
 let nextId = 1;
 function makeId(): string {
@@ -46,7 +57,7 @@ function allHcl(files: Record<string, string>): string {
     .join("\n");
 }
 
-function main() {
+async function main() {
   console.log("Azure TF Builder — generate smoke test\n");
 
   // One canonical order drives block output and module/export metadata.
@@ -529,6 +540,116 @@ function main() {
   console.log("✓ Richer CA: env {, http_scale_rule, KV secret + auto RBAC");
 
   // 8) Preview
+  {
+    const enteredName = "  rg-existing  ";
+    const invalidExisting: ResourceInstance = {
+      id: "invalid-existing",
+      type: "azurerm_resource_group",
+      tfName: "invalid_existing",
+      useExisting: true,
+      values: { name: "source-name" },
+      existingValues: { name: " \t " },
+      scope: sharedScope(),
+    };
+    const trimmedExisting: ResourceInstance = {
+      id: "trimmed-existing",
+      type: "azurerm_resource_group",
+      tfName: "trimmed_existing",
+      useExisting: true,
+      values: {},
+      existingValues: { name: enteredName },
+      scope: sharedScope(),
+    };
+    const existingGen = generateProject(config, [invalidExisting, trimmedExisting]);
+    const existingHcl = allHcl(existingGen.files);
+    assert.equal(existingGen.validationIssues.length, 1);
+    assert.equal(existingGen.validationIssues[0].resourceId, "invalid-existing");
+    assert.equal(existingGen.validationIssues[0].resourceLabel, "Resource Group");
+    assert.equal(existingGen.validationIssues[0].resourceName, "source-name");
+    assert.equal(existingGen.validationIssues[0].fieldLabel, "Name");
+    assert.match(existingHcl, /INVALID EXISTING IDENTIFIER: Name is required before export/);
+    assert.doesNotMatch(existingHcl, /name = "TODO"/);
+    assert.match(existingHcl, /name = "rg-existing"/);
+    assert.equal(
+      trimmedExisting.existingValues.name,
+      enteredName,
+      "generation must not rewrite the entered Resource state"
+    );
+    console.log("✓ Existing identifier diagnostics + trimmed emission");
+  }
+
+  {
+    const invalidExisting: ResourceInstance = {
+      id: "zip-invalid-existing",
+      type: "azurerm_resource_group",
+      tfName: "zip_invalid_existing",
+      useExisting: true,
+      values: { name: "source-name" },
+      existingValues: { name: "" },
+      scope: sharedScope(),
+    };
+    await assert.rejects(
+      () => buildProjectZipBuffer(config, [invalidExisting]),
+      (error: unknown) =>
+        error instanceof MissingExistingIdentifierError &&
+        error.code === "missing-existing-identifier" &&
+        error.issues.length === 1 &&
+        error.issues[0].resourceId === invalidExisting.id,
+      "ZIP creation must reject invalid included Existing identifiers"
+    );
+    console.log("✓ ZIP boundary rejects invalid Existing identifiers");
+  }
+
+  {
+    const orphan: ResourceInstance = {
+      id: "zip-orphan",
+      type: "azurerm_resource_group",
+      tfName: "zip_orphan",
+      useExisting: false,
+      values: { name: "zip-orphan", location: "westeurope" },
+      existingValues: {},
+      scope: sharedScope(),
+    };
+    const exportConfig = withResourceModule(
+      defaultExportConfig(),
+      orphan.id,
+      null
+    );
+    for (const createZip of [
+      () => buildProjectZipBuffer(config, [orphan], undefined, exportConfig),
+      () => downloadProjectZip(config, [orphan], undefined, exportConfig),
+    ]) {
+      await assert.rejects(
+        createZip,
+        (error: unknown) =>
+          error instanceof OrphanConfirmationRequiredError &&
+          error.code === "orphan-confirmation-required" &&
+          error.orphans[0]?.id === orphan.id,
+        "each public ZIP API must reject an unconfirmed orphan"
+      );
+    }
+    const zip = await buildProjectZipBuffer(
+      config,
+      [orphan],
+      undefined,
+      exportConfig,
+      { leaveUnmappedConfirmed: true }
+    );
+    assert.ok(zip.length > 0, "confirmed orphan exclusion permits ZIP creation");
+    await assert.doesNotReject(
+      () =>
+        downloadProjectZip(
+          config,
+          [orphan],
+          undefined,
+          exportConfig,
+          { leaveUnmappedConfirmed: true }
+        ),
+      "confirmed orphan exclusion permits direct ZIP download"
+    );
+    console.log("✓ ZIP APIs require explicit orphan confirmation");
+  }
+
   const preview = previewHcl(config, resources);
   assert.match(preview, /backend\.dev\.hcl/);
   assert.match(preview, /config\.tf/);
@@ -1699,4 +1820,7 @@ resource "azurerm_unknown_service" "unsupported" {}
   console.log("\nAll generate smoke tests passed.");
 }
 
-main();
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});

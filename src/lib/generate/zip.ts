@@ -7,6 +7,8 @@ import type {
   ResourceInstance,
 } from "../schema/types";
 import { generateProject } from "./hcl";
+import { assertExportableExistingIdentifiers } from "./existing-identifiers";
+import { canDownloadWithMap } from "./export-map";
 
 const GITIGNORE = `# Terraform
 .terraform/
@@ -25,12 +27,47 @@ override.tf.json
 terraform.rc
 `;
 
+/** Explicit user decision required when an export map omits resources. */
+export interface ZipExportOptions {
+  leaveUnmappedConfirmed?: boolean;
+}
+
+/** Raised at ZIP API boundaries rather than silently dropping unmapped resources. */
+export class OrphanConfirmationRequiredError extends Error {
+  readonly code = "orphan-confirmation-required" as const;
+  readonly orphans: ResourceInstance[];
+
+  constructor(orphans: ResourceInstance[]) {
+    super(
+      "Export cannot continue until unmapped resources are explicitly confirmed for exclusion."
+    );
+    this.name = "OrphanConfirmationRequiredError";
+    this.orphans = orphans;
+  }
+}
+
+function assertZipExportAllowed(
+  resources: ResourceInstance[],
+  exportConfig: ExportConfig | null | undefined,
+  options?: ZipExportOptions
+): void {
+  // Preserve the Existing identifier failure for resources that are included.
+  assertExportableExistingIdentifiers(resources, exportConfig);
+  const gate = canDownloadWithMap(resources, exportConfig, {
+    mapMode: false,
+    leaveUnmappedConfirmed: options?.leaveUnmappedConfirmed,
+  });
+  if (!gate.ok) throw new OrphanConfirmationRequiredError(gate.orphans);
+}
+
 export async function downloadProjectZip(
   config: ProjectConfig,
   resources: ResourceInstance[],
   environments?: Environment[],
-  exportConfig?: ExportConfig | null
+  exportConfig?: ExportConfig | null,
+  options?: ZipExportOptions
 ): Promise<void> {
+  assertZipExportAllowed(resources, exportConfig, options);
   const { files } = generateProject(config, resources, environments, exportConfig);
   const zip = new JSZip();
   const folder = zip.folder(sanitizeFolderName(config.name)) ?? zip;
@@ -58,8 +95,10 @@ export async function buildProjectZipBuffer(
   config: ProjectConfig,
   resources: ResourceInstance[],
   environments?: Environment[],
-  exportConfig?: ExportConfig | null
+  exportConfig?: ExportConfig | null,
+  options?: ZipExportOptions
 ): Promise<Buffer> {
+  assertZipExportAllowed(resources, exportConfig, options);
   const { files } = generateProject(config, resources, environments, exportConfig);
   const zip = new JSZip();
   for (const [name, content] of Object.entries(files)) {

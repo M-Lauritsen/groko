@@ -1,6 +1,7 @@
 import type { ProjectState } from "../schema/types";
 import { defaultExportConfig } from "../schema/types";
 import { defaultEnvironments } from "../schema/environments";
+import { repairExistingSnapshots } from "./existing-snapshots";
 
 export const PROJECT_FILE_VERSION = 1;
 
@@ -58,13 +59,17 @@ export function parseProjectFile(input: string | unknown): ProjectState {
     typeof state.activeEnvironmentId === "string" && environments.some((environment) => environment.id === state.activeEnvironmentId)
       ? state.activeEnvironmentId
       : environments[0].id;
-  const resources = state.resources.filter((resource) => isRecord(resource) && typeof resource.id === "string");
+  const resources = repairExistingSnapshots(
+    state.resources.filter(
+      (resource) => isRecord(resource) && typeof resource.id === "string"
+    ) as ProjectState["resources"]
+  );
 
   return {
     config: state.config as unknown as ProjectState["config"],
     environments: environments as ProjectState["environments"],
     activeEnvironmentId,
-    resources: resources as ProjectState["resources"],
+    resources,
     selectedResourceId: null,
     exportConfig: isRecord(state.exportConfig)
       ? (state.exportConfig as unknown as ProjectState["exportConfig"])

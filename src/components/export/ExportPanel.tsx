@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useProject } from "@/lib/store/project-context";
 import { previewHcl, generateProject } from "@/lib/generate/hcl";
 import { downloadProjectZip } from "@/lib/generate/zip";
 import {
   buildExportReviewSummary,
+  canCopyWithMap,
   canDownloadWithMap,
   shortResourceInfo,
 } from "@/lib/generate/export-map";
+import { canExportWithValidExistingIdentifiers } from "@/lib/generate/existing-identifiers";
 import { Button, Card, SectionTitle, Badge } from "@/components/ui/Field";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { TierBadge } from "@/components/project/TierBadge";
@@ -17,14 +19,28 @@ import { ReviewChangesPanel } from "./ReviewChangesPanel";
 
 type Tab = "review" | "structure" | "preview" | "files";
 
-export function ExportPanel() {
+export function ExportPanel({
+  onOpenResource,
+}: {
+  onOpenResource?: (resourceId: string) => void;
+}) {
   const { state } = useProject();
   const [tab, setTab] = useState<Tab>("review");
   const [mapMode, setMapMode] = useState(false);
+  const [leaveUnmappedAction, setLeaveUnmappedAction] = useState<
+    "download" | "copy"
+  >("download");
+  const [pendingCopyText, setPendingCopyText] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const leaveConfirmRef = useRef<HTMLDivElement>(null);
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+  const copyButtonRef = useRef<HTMLButtonElement>(null);
+  const leaveConfirmReturnTab = useRef<Tab | null>(null);
+  const leaveConfirmTitleId = useId();
+  const leaveConfirmDescriptionId = useId();
 
   const preview = useMemo(
     () =>
@@ -77,9 +93,63 @@ export function ExportPanel() {
     state.exportConfig,
     { mapMode }
   );
+  const identifierGate = useMemo(
+    () =>
+      canExportWithValidExistingIdentifiers(
+        state.resources,
+        state.exportConfig
+      ),
+    [state.resources, state.exportConfig]
+  );
 
-  const gateClear = downloadGate.ok;
+  const gateClear = downloadGate.ok && identifierGate.ok;
   const hasOrphans = downloadGate.orphans.length > 0;
+
+  useEffect(() => {
+    if (!leaveConfirmOpen || !hasOrphans) return;
+
+    previouslyFocused.current = document.activeElement as HTMLElement | null;
+    const root = leaveConfirmRef.current;
+    if (!root) return;
+
+    const focusables = () =>
+      Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((element) => !element.hasAttribute("disabled") && element.tabIndex !== -1);
+
+    focusables()[0]?.focus();
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeLeaveConfirmation();
+        return;
+      }
+
+      if (event.key !== "Tab") return;
+      const list = focusables();
+      if (list.length === 0) return;
+
+      const first = list[0];
+      const last = list[list.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      previouslyFocused.current?.focus?.();
+    };
+  }, [leaveConfirmOpen, hasOrphans]);
 
   async function doDownload(leaveUnmappedConfirmed: boolean) {
     const gate = canDownloadWithMap(state.resources, state.exportConfig, {
@@ -91,13 +161,19 @@ export function ExportPanel() {
       setTab("review");
       return;
     }
+    if (!identifierGate.ok) {
+      setLeaveConfirmOpen(false);
+      setTab("review");
+      return;
+    }
     setBusy(true);
     try {
       await downloadProjectZip(
         state.config,
         state.resources,
         state.environments,
-        state.exportConfig
+        state.exportConfig,
+        { leaveUnmappedConfirmed }
       );
       setLeaveConfirmOpen(false);
     } finally {
@@ -106,7 +182,13 @@ export function ExportPanel() {
   }
 
   async function onDownload() {
+    if (!identifierGate.ok) {
+      setLeaveConfirmOpen(false);
+      setTab("review");
+      return;
+    }
     if (hasOrphans) {
+      setLeaveUnmappedAction("download");
       setLeaveConfirmOpen(true);
       setTab("review");
       return;
@@ -115,13 +197,41 @@ export function ExportPanel() {
   }
 
   async function onCopy() {
+    const gate = canCopyWithMap(state.resources, state.exportConfig, {
+      mapMode,
+    });
     const text =
       tab === "files" && activeFile
         ? generated.files[activeFile]
         : preview;
+    if (!identifierGate.ok) {
+      setTab("review");
+      return;
+    }
+    if (!gate.ok) {
+      setLeaveUnmappedAction("copy");
+      setPendingCopyText(text);
+      leaveConfirmReturnTab.current = tab;
+      setLeaveConfirmOpen(true);
+      setTab("review");
+      return;
+    }
+    await copyGeneratedContent(text);
+  }
+
+  async function copyGeneratedContent(text: string) {
     await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  async function confirmLeaveUnmapped() {
+    if (leaveUnmappedAction === "copy") {
+      await copyGeneratedContent(pendingCopyText);
+      closeLeaveConfirmation();
+      return;
+    }
+    await doDownload(true);
   }
 
   const moduleCount = fileNames.filter((f) =>
@@ -132,9 +242,20 @@ export function ExportPanel() {
   ).length;
 
   function openMapForOrphans() {
+    leaveConfirmReturnTab.current = null;
     setTab("structure");
     setMapMode(true);
     setLeaveConfirmOpen(false);
+  }
+
+  function closeLeaveConfirmation() {
+    const returnTab = leaveConfirmReturnTab.current;
+    leaveConfirmReturnTab.current = null;
+    setLeaveConfirmOpen(false);
+    if (returnTab) {
+      setTab(returnTab);
+      requestAnimationFrame(() => copyButtonRef.current?.focus());
+    }
   }
 
   return (
@@ -181,7 +302,14 @@ export function ExportPanel() {
             ]}
           />
           {(tab === "preview" || tab === "files") && (
-            <Button variant="secondary" size="sm" onClick={onCopy}>
+            <Button
+              variant="secondary"
+              size="sm"
+              ref={copyButtonRef}
+              onClick={onCopy}
+              disabled={!identifierGate.ok}
+              title={identifierGate.reason}
+            >
               {copied ? "Copied!" : "Copy"}
             </Button>
           )}
@@ -191,6 +319,7 @@ export function ExportPanel() {
               size="sm"
               onClick={onDownload}
               disabled={busy}
+              title={identifierGate.reason ?? downloadGate.reason}
             >
               {busy ? "Zipping…" : "Download ZIP"}
             </Button>
@@ -200,8 +329,8 @@ export function ExportPanel() {
                 variant="secondary"
                 size="sm"
                 onClick={onDownload}
-                disabled={busy}
-                title={downloadGate.reason}
+                disabled={busy || !identifierGate.ok}
+                title={identifierGate.reason ?? downloadGate.reason}
               >
                 {busy ? "Zipping…" : "Download ZIP"}
               </Button>
@@ -209,10 +338,11 @@ export function ExportPanel() {
                 variant="secondary"
                 size="sm"
                 onClick={() => {
+                  setLeaveUnmappedAction("download");
                   setLeaveConfirmOpen(true);
                   setTab("review");
                 }}
-                disabled={busy}
+                disabled={busy || !identifierGate.ok}
               >
                 Leave unmapped…
               </Button>
@@ -223,22 +353,27 @@ export function ExportPanel() {
 
       {leaveConfirmOpen && hasOrphans && (
         <div
+          ref={leaveConfirmRef}
           role="dialog"
           aria-modal="true"
-          aria-labelledby="leave-unmapped-title"
+          aria-labelledby={leaveConfirmTitleId}
+          aria-describedby={leaveConfirmDescriptionId}
           className="mx-4 mt-3 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/50 p-4 shadow-sm"
         >
           <h3
-            id="leave-unmapped-title"
+            id={leaveConfirmTitleId}
             className="text-sm font-semibold text-amber-950 dark:text-amber-100"
           >
             Leave {downloadGate.orphans.length} resource
             {downloadGate.orphans.length === 1 ? "" : "s"} unmapped?
           </h3>
-          <p className="mt-1 text-xs text-amber-900 dark:text-amber-200">
-            They will be omitted from the ZIP. This is never silent — confirm
-            only if you intend to exclude them. Prefer assigning folders in Map
-            mode.
+          <p
+            id={leaveConfirmDescriptionId}
+            className="mt-1 text-xs text-amber-900 dark:text-amber-200"
+          >
+            They will be omitted from exported content. This is never silent —
+            confirm only if you intend to exclude them. Prefer assigning folders
+            in Map mode.
           </p>
           <ul className="mt-2 max-h-28 overflow-y-auto text-xs list-disc pl-5 text-amber-900 dark:text-amber-200 space-y-0.5">
             {downloadGate.orphans.map((r) => {
@@ -255,9 +390,13 @@ export function ExportPanel() {
               variant="danger"
               size="sm"
               disabled={busy}
-              onClick={() => doDownload(true)}
+              onClick={confirmLeaveUnmapped}
             >
-              {busy ? "Zipping…" : "Download without them"}
+              {leaveUnmappedAction === "copy"
+                ? "Copy without them"
+                : busy
+                  ? "Zipping…"
+                  : "Download without them"}
             </Button>
             <Button
               variant="secondary"
@@ -269,7 +408,7 @@ export function ExportPanel() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setLeaveConfirmOpen(false)}
+              onClick={closeLeaveConfirmation}
             >
               Cancel
             </Button>
@@ -278,11 +417,21 @@ export function ExportPanel() {
       )}
 
       {tab === "review" ? (
-        <ReviewChangesPanel onOpenMap={openMapForOrphans} />
+        <ReviewChangesPanel
+          onOpenMap={openMapForOrphans}
+          onOpenResource={onOpenResource}
+        />
       ) : tab === "preview" ? (
-        <pre className="flex-1 overflow-auto p-4 text-[12px] leading-relaxed font-mono text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/50">
-          {preview}
-        </pre>
+        <div className="flex-1 min-h-0 flex flex-col">
+          {generated.validationIssues.length > 0 && (
+            <p role="alert" className="mx-4 mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-900 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-100">
+              Invalid preview—not exportable. Fix the Existing identifiers shown in Review changes.
+            </p>
+          )}
+          <pre className="flex-1 overflow-auto p-4 text-[12px] leading-relaxed font-mono text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/50">
+            {preview}
+          </pre>
+        </div>
       ) : tab === "structure" ? (
         <FolderStructurePanel
           mapMode={mapMode}
@@ -310,6 +459,11 @@ export function ExportPanel() {
             </ul>
           </aside>
           <div className="md:col-span-8 min-h-0 flex flex-col">
+            {generated.validationIssues.length > 0 && (
+              <p role="alert" className="mx-3 mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-900 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-100">
+                Invalid preview—not exportable. Fix the Existing identifiers shown in Review changes.
+              </p>
+            )}
             <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-700 text-xs font-mono text-sky-700 dark:text-sky-300">
               {activeFile}
             </div>
