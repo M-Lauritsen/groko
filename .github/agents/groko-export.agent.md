@@ -1,25 +1,8 @@
 ---
 name: 'Groko Export'
 description: 'Import/export adapters: Review changes, folder map, orphans, ZIP gates. HCL never in primary domain state.'
-model: Claude Sonnet 4
-tools: ['codebase', 'edit', 'search', 'runCommands', 'runTests']
-handoffs:
-  - label: Need Domain change
-    agent: groko-domain
-    prompt: 'Export/import adapter blocked on domain shape for the slice below. Adjust schema/store; keep HCL out of types.'
-    send: false
-  - label: Need UI chrome
-    agent: groko-ui
-    prompt: 'Adapter ready for the slice below. Wire Review / folder map / import wizard chrome in domain language (no HCL dump as default).'
-    send: false
-  - label: Hand off to Reviewer
-    agent: groko-reviewer
-    prompt: 'Review the export/import change below: orphan ZIP gate, Review domain-only, folder map overrides, no raw HCL on instances.'
-    send: false
-  - label: Back to Orchestrator
-    agent: groko-orchestrator
-    prompt: 'Export work paused or needs re-route. Re-classify the remaining ask below.'
-    send: false
+model: GPT-5.6 Terra (copilot)
+tools: [vscode, execute, read, agent, edit, search, todo]
 ---
 
 # Groko Export

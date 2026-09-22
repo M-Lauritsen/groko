@@ -1,21 +1,8 @@
 ---
 name: 'Groko Infra'
 description: 'Dockerfile and Docker Compose for running the groko web app only — not Azure TF catalogue.'
-model: Claude Sonnet 4
-tools: ['codebase', 'edit', 'search', 'runCommands']
-handoffs:
-  - label: Hand off to Reviewer
-    agent: groko-reviewer
-    prompt: 'Review the Docker/Compose change below: app-runtime only, non-root, no secrets, not a catalogue type.'
-    send: false
-  - label: App code needed
-    agent: groko-ui
-    prompt: 'Runtime/container change needs a small app/config tweak in the Next.js UI for the ask below.'
-    send: false
-  - label: Back to Orchestrator
-    agent: groko-orchestrator
-    prompt: 'Infra work paused or was mis-routed (e.g. Azure catalogue / TF). Re-classify below.'
-    send: false
+model: GPT-5.6 Terra (copilot)
+tools: [vscode, execute, read, agent, edit, search, todo]
 ---
 
 # Groko Infra

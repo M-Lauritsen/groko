@@ -1,25 +1,8 @@
 ---
 name: 'Groko UI'
 description: 'React UI for Environment → Resources (List|Graph) → Export. Domain language, a11y, match existing patterns.'
-model: Claude Sonnet 4
-tools: ['codebase', 'edit', 'search', 'runCommands', 'runTests']
-handoffs:
-  - label: Need Domain change
-    agent: groko-domain
-    prompt: 'UI blocked on domain model/invariant for the slice below. Adjust schema/store first; keep types TF-free.'
-    send: false
-  - label: Need Export adapter
-    agent: groko-export
-    prompt: 'UI needs Review/map/ZIP/import adapter behavior for the slice below. Keep HCL out of primary panels.'
-    send: false
-  - label: Hand off to Reviewer
-    agent: groko-reviewer
-    prompt: 'Review the UI change below for spine fidelity, domain copy, a11y, and no raw azurerm_* on primary rows.'
-    send: false
-  - label: Back to Orchestrator
-    agent: groko-orchestrator
-    prompt: 'UI work paused or needs re-route. Re-classify the remaining ask below.'
-    send: false
+model: GPT-5.6 Terra (copilot)
+tools: [vscode, execute, read, agent, edit, search, browser, todo]
 ---
 
 # Groko UI

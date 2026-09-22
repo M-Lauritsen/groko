@@ -1,29 +1,8 @@
 ---
 name: 'Groko Reviewer'
 description: 'Read-only PR review against groko domain rules: spine, scopes, adapters, Prod/orphan gates.'
-model: Claude Sonnet 4
-tools: ['codebase', 'search', 'github']
-handoffs:
-  - label: Fix via Domain
-    agent: groko-domain
-    prompt: 'Address the domain review findings below with minimal diffs. No drive-by refactors. Keep types TF-free.'
-    send: false
-  - label: Fix via UI
-    agent: groko-ui
-    prompt: 'Address the UI review findings below with minimal diffs. Domain language; spine fidelity.'
-    send: false
-  - label: Fix via Export
-    agent: groko-export
-    prompt: 'Address the export/import review findings below with minimal diffs. HCL edge-only; honour ZIP/orphan gates.'
-    send: false
-  - label: Fix via Infra
-    agent: groko-infra
-    prompt: 'Address the Docker/Compose review findings below. App runtime only.'
-    send: false
-  - label: Back to Orchestrator
-    agent: groko-orchestrator
-    prompt: 'Review complete or needs re-plan. Re-classify remaining work below.'
-    send: false
+model: GPT-5.6 Terra (copilot)
+tools: [vscode, execute, read, agent, edit, search, todo]
 ---
 
 # Groko Reviewer

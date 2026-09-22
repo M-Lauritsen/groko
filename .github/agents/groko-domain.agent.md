@@ -1,25 +1,8 @@
 ---
 name: 'Groko Domain'
 description: 'Environment graph, resources, refs, Existing|Create, PE/DNS ownership, store invariants. No HCL in domain types.'
-model: Claude Sonnet 4
-tools: ['codebase', 'edit', 'search', 'runCommands', 'runTests']
-handoffs:
-  - label: Hand off to UI
-    agent: groko-ui
-    prompt: 'Domain model/invariants ready for the slice below. Wire Environment → Resources → Graph → Export chrome in domain language. Match existing components.'
-    send: false
-  - label: Hand off to Export
-    agent: groko-export
-    prompt: 'Domain changed for the slice below. Update import/export adapters (emit/parse, Review, folder map) so HCL stays edge-only.'
-    send: false
-  - label: Hand off to Reviewer
-    agent: groko-reviewer
-    prompt: 'Review the domain change below against groko invariants (scopes, refs, Prod friction, hub DNS, no TF in types).'
-    send: false
-  - label: Back to Orchestrator
-    agent: groko-orchestrator
-    prompt: 'Domain work paused or needs re-route. Re-classify the remaining ask below.'
-    send: false
+model: GPT-5.6 Terra (copilot)
+tools: [vscode, execute, read, agent, edit, search, todo]
 ---
 
 # Groko Domain
